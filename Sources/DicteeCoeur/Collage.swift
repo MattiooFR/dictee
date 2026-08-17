@@ -14,7 +14,9 @@ public enum Collage {
         frapperCommandeV()
     }
 
-    private static func frapperCommandeV() {
+    /// Poste un ⌘V synthétique. Exposé pour que le recollage différé
+    /// (après réactivation d'une autre application) puisse le déclencher seul.
+    public static func frapperCommandeV() {
         // .privateState : les modificateurs physiquement enfoncés ne viennent
         // pas contaminer l'événement synthétique.
         guard let source = CGEventSource(stateID: .privateState),
