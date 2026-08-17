@@ -52,7 +52,10 @@ public struct MachineEtats {
         case (.capture(gardeFranchie: true), .relachement),
              (.capture(gardeFranchie: _), .dureeMax):
             etat = .transcription
-            return [.desarmerMinuteries, .cloturerCapture, .pastille(.transcription)]
+            // Le rotor est posé AVANT la clôture : celle-ci produit l'événement
+            // suivant, dont l'état d'affichage doit pouvoir recouvrir le rotor
+            // et non l'inverse.
+            return [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture]
 
         case (.transcription, .captureAnalysee(let sec)):
             // Whisper hallucine sur le silence : ne pas l'appeler est la seule parade.

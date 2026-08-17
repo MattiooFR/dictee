@@ -25,7 +25,7 @@ func gardeOuvreLeCercle() {
 @Test("une dictée nominale clôture la capture et passe en transcription")
 func dicteeNominale() {
     var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee)
-    #expect(m.recevoir(.relachement) == [.desarmerMinuteries, .cloturerCapture, .pastille(.transcription)])
+    #expect(m.recevoir(.relachement) == [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture])
     #expect(m.etat == .transcription)
 }
 
@@ -39,7 +39,7 @@ func raccourciAnnule() {
 @Test("la coupure de sécurité transcrit ce qui a été dit")
 func coupureSecurite() {
     var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee)
-    #expect(m.recevoir(.dureeMax) == [.desarmerMinuteries, .cloturerCapture, .pastille(.transcription)])
+    #expect(m.recevoir(.dureeMax) == [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture])
 }
 
 @Test("moins de 400 ms de parole n'atteint jamais le modèle")
@@ -84,4 +84,17 @@ func appuiPendantTranscription() {
     var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee); _ = m.recevoir(.relachement)
     #expect(m.recevoir(.appui) == [])
     #expect(m.etat == .transcription)
+}
+
+@Test("l'affichage de la transcription précède la clôture de capture")
+func ordreAffichageAvantCloture() {
+    // La clôture produit l'événement suivant (captureAnalysee), dont l'état
+    // d'affichage doit recouvrir le rotor. Dans l'ordre inverse, le rotor
+    // écrasait l'annulation et ne partait plus jamais.
+    var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee)
+    let actions = m.recevoir(.relachement)
+    let iPastille = actions.firstIndex(of: .pastille(.transcription))
+    let iCloture = actions.firstIndex(of: .cloturerCapture)
+    #expect(iPastille != nil && iCloture != nil)
+    #expect(iPastille! < iCloture!)
 }

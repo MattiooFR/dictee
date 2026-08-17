@@ -89,6 +89,17 @@ public final class Coordinateur {
         for a in actions { executer(a) }
     }
 
+    /// Réinjecte un événement produit par une action, **après** la fin du lot
+    /// en cours. Le faire en direct traiterait le nouvel état au milieu du
+    /// précédent : les actions restantes l'écraseraient (le rotor de
+    /// transcription recouvrait l'annulation, et ne partait plus jamais).
+    private func injecter(_ e: Evenement) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            appliquer(machine.recevoir(e))
+        }
+    }
+
     private func executer(_ action: Action) {
         switch action {
         case .demarrerCapture:
@@ -96,7 +107,7 @@ public final class Coordinateur {
             do { try micro.demarrer() }
             catch {
                 journaliser("micro indisponible : \(error)")
-                appliquer(machine.recevoir(.echec("micro indisponible")))
+                injecter(.echec("micro indisponible"))
             }
 
         case .armerGarde:
@@ -126,15 +137,15 @@ public final class Coordinateur {
                 do { wavCourant = try micro.ecrireWAV(echantillons) }
                 catch {
                     journaliser("écriture WAV impossible : \(error)")
-                    appliquer(machine.recevoir(.echec("écriture WAV impossible")))
+                    injecter(.echec("écriture WAV impossible"))
                     return
                 }
             }
-            appliquer(machine.recevoir(.captureAnalysee(secondesParlees: parlees)))
+            injecter(.captureAnalysee(secondesParlees: parlees))
 
         case .envoyerAuWorker:
             guard let wav = wavCourant else {
-                appliquer(machine.recevoir(.echec("aucun audio à transcrire"))); return
+                injecter(.echec("aucun audio à transcrire")); return
             }
             transcripteur.transcrire(wav) { [weak self] resultat in
                 guard let self else { return }
