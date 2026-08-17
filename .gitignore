@@ -3,5 +3,4 @@
 *.app/
 .DS_Store
 __pycache__/
-
-.build/
+worker/tests/fixtures/
