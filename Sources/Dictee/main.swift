@@ -42,6 +42,18 @@ case "--test-collage":
     Collage.coller(texte)
     print("collé.")
 
+case "--test-clavier":
+    guard Declencheur.autorisationAccordee() else {
+        print("Surveillance des entrées non accordée. Demande en cours…")
+        Declencheur.demanderAutorisation()
+        print("Accorde l'autorisation puis relance cette commande.")
+        exit(1)
+    }
+    let d = Declencheur { signal in print("→ \(signal)") }
+    try d.demarrer()
+    print("Maintiens ⌘ droite. Teste aussi ⌘ droite + C. Ctrl-C pour arrêter.")
+    CFRunLoopRun()
+
 case .some(let inconnu):
     FileHandle.standardError.write(Data("sous-commande inconnue : \(inconnu)\n".utf8))
     print(aide)
