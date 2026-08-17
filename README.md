@@ -51,15 +51,16 @@ le LaunchAgent (démarrage automatique à l'ouverture de session).
 
 | Autorisation | Pourquoi | Où |
 |---|---|---|
-| Micro | Capturer la voix | Demandé automatiquement à la première dictée |
 | Surveillance des entrées | Écouter ⌘ droite | Réglages → Confidentialité et sécurité |
 | Accessibilité | Poster le ⌘V du collage | Réglages → Confidentialité et sécurité |
+| Micro | Capturer la voix | Boîte de dialogue au démarrage |
 
-Ajouter `Dictee.app` dans les deux dernières listes, puis :
+Les trois sont demandées **au démarrage**, jamais en pleine dictée : une boîte
+de dialogue pendant un push-to-talk ferait perdre la phrase.
 
-```bash
-launchctl kickstart -k gui/$UID/com.dugmedia.dictee
-```
+Tant qu'il en manque une, la pastille reste rouge et l'app attend. **Rien à
+relancer** : elle teste toutes les 2 s et démarre d'elle-même dès que tu
+accordes. Le journal dit laquelle manque.
 
 ## Utilisation
 

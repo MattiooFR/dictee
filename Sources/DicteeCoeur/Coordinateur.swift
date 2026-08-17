@@ -37,6 +37,9 @@ public final class Coordinateur {
     private func autorisationManquante() -> String? {
         if !Declencheur.autorisationAccordee() { return "surveillance des entrées" }
         if !Declencheur.accessibiliteAccordee() { return "accessibilité" }
+        // Le micro est attendu au démarrage, pas au milieu d'une dictée : une
+        // boîte de dialogue pendant un push-to-talk ferait perdre la phrase.
+        if !Micro.autorisationAccordee() { return "micro" }
         return nil
     }
 
@@ -51,6 +54,7 @@ public final class Coordinateur {
             autorisationsDemandees = true
             Declencheur.demanderAutorisation()
             Declencheur.demanderAccessibilite()
+            Micro.demanderAutorisation()
             journaliser("⚠️ autorisation manquante : \(quoi)")
             journaliser("   Réglages → Confidentialité et sécurité → ajouter Dictee.app")
             journaliser("   j'attends ; la dictée démarrera toute seule dès que ce sera accordé")

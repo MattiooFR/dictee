@@ -14,7 +14,25 @@ public final class Micro {
 
     public init() {}
 
-    public func preparer() { moteur.prepare() }
+    public static func autorisationAccordee() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    public static func demanderAutorisation() {
+        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+    }
+
+    /// Préalloue les ressources audio sans engager le micro.
+    ///
+    /// `prepare()` sur un moteur dont aucun nœud n'a été touché lève une
+    /// exception Objective-C — que Swift ne peut PAS rattraper avec `try`, donc
+    /// le process meurt. Accéder à `inputNode` attache le nœud au graphe et
+    /// satisfait la précondition.
+    public func preparer() {
+        let entree = moteur.inputNode
+        guard entree.inputFormat(forBus: 0).sampleRate > 0 else { return }
+        moteur.prepare()
+    }
 
     public func demarrer() throws {
         file.sync { echantillons.removeAll(keepingCapacity: true) }
