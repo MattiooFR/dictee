@@ -1,3 +1,4 @@
+import AppKit
 import DicteeCoeur
 import Foundation
 
@@ -53,6 +54,32 @@ case "--test-clavier":
     try d.demarrer()
     print("Maintiens ⌘ droite. Teste aussi ⌘ droite + C. Ctrl-C pour arrêter.")
     CFRunLoopRun()
+
+case "--test-pastille":
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let p = Pastille()
+
+    var phase = 0.0
+    // .common et non .default : sinon le minuteur se fige pendant les animations.
+    let faussesVoix = Timer(timeInterval: 1.0 / 46, repeats: true) { _ in
+        phase += 0.14
+        // parole simulée : alternance de syllabes et de blancs
+        let enveloppe = max(0, sin(phase)) * (0.6 + 0.4 * sin(phase * 3.1))
+        p.niveau(Float(-50 + 45 * enveloppe))
+    }
+    RunLoop.main.add(faussesVoix, forMode: .common)
+
+    let scenario: [(TimeInterval, EtatPastille)] = [
+        (1.0, .ecoute), (3.0, .transcription), (5.0, .succes),
+        (6.5, .annule), (8.0, .erreur("worker injoignable")), (12.0, .repos),
+    ]
+    for (t, etat) in scenario {
+        DispatchQueue.main.asyncAfter(deadline: .now() + t) { p.afficher(etat) }
+    }
+    print("Défilé des états pendant 13 s. Ctrl-C pour arrêter plus tôt.")
+    DispatchQueue.main.asyncAfter(deadline: .now() + 13) { app.terminate(nil) }
+    app.run()
 
 case .some(let inconnu):
     FileHandle.standardError.write(Data("sous-commande inconnue : \(inconnu)\n".utf8))
