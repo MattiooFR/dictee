@@ -91,6 +91,31 @@ et prévient dans le journal.
 Relancer l'app après modification :
 `launchctl kickstart -k gui/$UID/com.dugmedia.dictee`
 
+## Historique
+
+Toutes les dictées sont conservées dans `~/.config/dictee/historique.jsonl`
+(une ligne JSON par dictée, ~200 octets). Seul le texte est gardé, jamais
+l'audio.
+
+**Trois appuis brefs sur ⌘ droite** ouvrent la fenêtre de consultation.
+
+| Geste | Effet |
+|---|---|
+| Champ de recherche | Filtre à la frappe, insensible à la casse et aux accents |
+| Clic sur une ligne | Le texte part dans le presse-papier |
+| ⏎ | Le texte est recollé dans l'application d'où tu venais |
+| ⌫ | L'entrée est supprimée |
+| Échap | La fenêtre se ferme |
+
+## Enregistrer sans tenir la touche
+
+La barre au repos **se réveille au survol**. Un clic dessus démarre un
+enregistrement verrouillé : plus besoin de maintenir ⌘ droite. Un second clic,
+ou un appui sur ⌘ droite, arrête et transcrit.
+
+En mode verrouillé, taper au clavier n'annule pas — contrairement au
+push-to-talk, où ⌘ droite + une touche reste un raccourci normal.
+
 ## Diagnostic
 
 ```bash
@@ -107,7 +132,7 @@ Chaque module se vérifie seul, sans le reste de l'application.
 ## Tests
 
 ```bash
-swift test                                                    # 22 tests
+swift test                                                    # 41 tests
 .venv/bin/python -m pytest worker/tests/test_filtres.py -q     # 9 tests
 .venv/bin/python -m pytest worker/tests/test_integration.py \
   -q -m lent -c worker/pytest.ini                              # 2 tests (charge le modèle)
@@ -134,6 +159,18 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
 - [ ] Sur un second écran : la pastille se repositionne à la dictée suivante
 - [ ] Au repos, **aucun point orange** micro dans la barre de menus
 - [ ] Après redémarrage du Mac, la dictée fonctionne sans rien relancer
+- [ ] Clic sur la pastille → enregistre sans tenir de touche ; second clic →
+      **le texte atterrit dans l'application d'origine** (valide le panneau
+      non activant)
+- [ ] Pendant un enregistrement verrouillé, taper au clavier n'annule pas
+- [ ] Survol de la barre au repos → elle s'élargit et s'éclaircit
+- [ ] Clic juste à côté de la pastille → traverse vers l'app du dessous
+- [ ] Trois appuis brefs sur ⌘ droite ouvrent la fenêtre ; deux ne l'ouvrent pas
+- [ ] Trois appuis brefs ne produisent ni saccade audio ni clignotement de
+      l'indicateur micro
+- [ ] Dans la fenêtre : la recherche filtre, un clic copie, ⏎ recolle **dans
+      l'app d'où l'on venait**, ⌫ supprime, Échap ferme
+- [ ] Après suppression et redémarrage, l'entrée n'est pas revenue
 
 ## Architecture
 

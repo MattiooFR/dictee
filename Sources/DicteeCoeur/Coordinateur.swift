@@ -19,12 +19,24 @@ public final class Coordinateur {
     private var gardeEnCours: DispatchWorkItem?
     private var dureeMaxEnCours: DispatchWorkItem?
     private var wavCourant: URL?
+    private var dernierDelai: Double = 0
+
+    private let historique: Historique
+    private lazy var fenetreHistorique: FenetreHistorique = {
+        let f = FenetreHistorique(historique: historique)
+        f.surRecoller = { texte, app in
+            Reactivation.collerDans(app, texte: texte, surJournal: { journaliser($0) })
+        }
+        return f
+    }()
 
     public init(racine: URL) {
         transcripteur = Transcripteur(
             executable: racine.appendingPathComponent(".venv/bin/python"),
             arguments: [racine.appendingPathComponent("worker/transcribe.py").path],
             delai: Coordinateur.delaiWorker)
+        historique = Historique(fichier: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/dictee/historique.jsonl"))
     }
 
     /// Ne sort jamais sur une autorisation manquante : la pastille reste rouge
@@ -98,6 +110,14 @@ public final class Coordinateur {
             guard let self else { return }
             appliquer(machine.recevoir(.clicPastille))
         }
+        historique.surJournal = { journaliser($0) }
+        DispatchQueue.global(qos: .utility).async { [historique] in
+            historique.charger()
+            DispatchQueue.main.async {
+                journaliser("historique : \(historique.entrees.count) dictée(s) chargée(s)")
+            }
+        }
+
         journaliser("Dictée \(Version.courante) — maintiens ⌘ droite pour dicter")
     }
 
@@ -192,6 +212,7 @@ public final class Coordinateur {
                 wavCourant = nil
                 switch resultat {
                 case .success(let r):
+                    dernierDelai = r.secondes
                     journaliser("📝 \(r.secondes)s : \(r.texte.prefix(90))")
                     appliquer(machine.recevoir(.texteRecu(r.texte)))
                 case .failure(let e):
@@ -202,10 +223,15 @@ public final class Coordinateur {
             }
 
         case .ouvrirHistorique:
-            journaliser("triple appui détecté (fenêtre branchée à la tâche 8)")
+            fenetreHistorique.ouvrir()
 
         case .coller(let texte):
             Collage.coller(texte)
+            // Perdre l'archive ne doit jamais faire perdre le texte : on colle
+            // d'abord, on archive ensuite, et un échec d'écriture ne fait que
+            // partir au journal.
+            do { try historique.ajouter(texte: texte, secondes: dernierDelai) }
+            catch { journaliser("historique non écrit : \(error)") }
 
         case .pastille(let etat):
             pastille.afficher(etat)
