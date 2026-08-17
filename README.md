@@ -69,12 +69,13 @@ indique l'état :
 
 | Pastille | État |
 |---|---|
-| Barre verticale grise | Au repos |
-| Cercle noir, anneau qui respire | J'écoute |
-| Arc qui tourne | Je transcris |
+| Fine barre grise au ras du bord | Au repos |
+| Barre élargie et éclaircie | La souris la survole |
+| Bandeau noir, vague de barres qui monte | J'écoute |
+| Bandeau noir, ondulation lente | Je transcris |
 | Coche verte | Texte inséré |
 | Pulsation grise | Annulé (appui trop court, ou rien dit) |
-| Cercle rouge | Erreur — détail dans le journal |
+| Bandeau rouge | Erreur — détail dans le journal |
 
 Un appui bref sur ⌘ droite ne déclenche rien, et ⌘ droite + une autre touche
 reste un raccourci normal.
@@ -145,7 +146,7 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
 
 - [ ] Les trois autorisations sont **toujours** accordées (si elles sautent,
       le certificat de signature a changé)
-- [ ] `swift test` : 22 tests au vert
+- [ ] `swift test` : 41 tests au vert
 - [ ] `.venv/bin/python -m pytest worker/tests/test_filtres.py -q` : 9 au vert
 - [ ] Dictée nominale de 3 s dans TextEdit → texte inséré
 - [ ] Même chose dans Chrome, Slack et VS Code
@@ -155,7 +156,6 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
 - [ ] Silence de 3 s sous ⌘ droite → pulsation grise, aucune ligne worker
       dans le journal
 - [ ] Pastille visible au-dessus d'une fenêtre en plein écran
-- [ ] Clic à l'emplacement de la pastille → traverse vers l'app du dessous
 - [ ] Sur un second écran : la pastille se repositionne à la dictée suivante
 - [ ] Au repos, **aucun point orange** micro dans la barre de menus
 - [ ] Après redémarrage du Mac, la dictée fonctionne sans rien relancer
@@ -174,15 +174,19 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
 
 ## Architecture
 
-Voir `docs/superpowers/specs/2026-08-17-dictee-design.md` pour le design et
-`docs/superpowers/plans/2026-08-17-dictee.md` pour le découpage.
+Designs et plans dans `docs/superpowers/` :
+
+- v0.1 — dictée, collage, pastille : `specs/2026-08-17-dictee-design.md`
+- v0.2 — historique, fenêtre, pastille interactive :
+  `specs/2026-08-17-dictee-historique-design.md`
 
 ```
  ⌘ droite ─▶ Dictee.app (Swift, agent LSUIElement)
                 ├─ CGEventTap passif       (écoute ⌘ droite)
                 ├─ AVAudioEngine           (audio + niveau RMS)
-                ├─ NSWindow flottante      (la pastille)
+                ├─ NSPanel non activant    (la pastille, cliquable)
                 ├─ NSPasteboard + CGEvent  (le collage)
+                ├─ Historique JSONL        (~/.config/dictee)
                 └─▶ worker Python (enfant, stdin/stdout)
                        └─ mlx-whisper large-v3-turbo, modèle résident
 ```
