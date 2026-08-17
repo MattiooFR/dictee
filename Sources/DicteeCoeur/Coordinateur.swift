@@ -162,6 +162,9 @@ public final class Coordinateur {
                 }
             }
 
+        case .ouvrirHistorique:
+            journaliser("triple appui détecté (fenêtre branchée à la tâche 8)")
+
         case .coller(let texte):
             Collage.coller(texte)
 

@@ -98,3 +98,75 @@ func ordreAffichageAvantCloture() {
     #expect(iPastille != nil && iCloture != nil)
     #expect(iPastille! < iCloture!)
 }
+
+// ── mode verrouillé et triple appui ───────────────────────────────────────
+
+@Test("un clic sur la pastille démarre un enregistrement verrouillé")
+func clicDemarre() {
+    var m = MachineEtats()
+    #expect(m.recevoir(.clicPastille) == [.demarrerCapture, .armerDureeMax, .pastille(.ecoute)])
+    #expect(m.etat == .captureVerrouillee)
+}
+
+@Test("il n'y a pas de garde en mode verrouillé : le bandeau s'ouvre tout de suite")
+func pasDeGardeEnVerrouille() {
+    var m = MachineEtats()
+    let actions = m.recevoir(.clicPastille)
+    #expect(!actions.contains(.armerGarde))
+    #expect(actions.contains(.pastille(.ecoute)))
+}
+
+@Test("un second clic arrête et transcrit")
+func secondClicArrete() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.clicPastille) == [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture])
+    #expect(m.etat == .transcription)
+}
+
+@Test("⌘ droite arrête aussi le mode verrouillé, à l'appui")
+func commandeArreteLeVerrouille() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.appui) == [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture])
+    #expect(m.etat == .transcription)
+}
+
+@Test("relâcher ⌘ droite ne coupe pas le mode verrouillé")
+func relachementSansEffetEnVerrouille() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.relachement) == [])
+    #expect(m.etat == .captureVerrouillee)
+}
+
+@Test("taper au clavier n'annule pas le mode verrouillé")
+func autreToucheSansEffetEnVerrouille() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.autreTouche) == [])
+    #expect(m.etat == .captureVerrouillee)
+}
+
+@Test("la coupure de sécurité s'applique aussi au mode verrouillé")
+func dureeMaxEnVerrouille() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.dureeMax) == [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture])
+}
+
+@Test("trois appuis brefs ouvrent l'historique sans toucher à l'état")
+func tripleAppuiOuvreHistorique() {
+    var m = MachineEtats()
+    #expect(m.recevoir(.tripleAppui) == [.ouvrirHistorique])
+    #expect(m.etat == .repos)
+}
+
+@Test("un clic pendant une transcription est ignoré : un seul travail à la fois")
+func clicPendantTranscriptionIgnore() {
+    var m = MachineEtats(); _ = m.recevoir(.clicPastille); _ = m.recevoir(.clicPastille)
+    #expect(m.recevoir(.clicPastille) == [])
+    #expect(m.etat == .transcription)
+}
+
+@Test("un clic pendant un push-to-talk est ignoré")
+func clicPendantPushToTalkIgnore() {
+    var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee)
+    #expect(m.recevoir(.clicPastille) == [])
+    #expect(m.etat == .capture(gardeFranchie: true))
+}

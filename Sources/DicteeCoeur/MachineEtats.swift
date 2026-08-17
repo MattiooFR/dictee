@@ -7,6 +7,7 @@ public enum EtatPastille: Equatable {
 
 public enum Evenement: Equatable {
     case appui, gardeEcoulee, relachement, autreTouche, dureeMax
+    case clicPastille, tripleAppui
     case captureAnalysee(secondesParlees: Double)
     case texteRecu(String)
     case echec(String)
@@ -16,13 +17,16 @@ public enum Action: Equatable {
     case demarrerCapture, armerGarde, armerDureeMax, desarmerMinuteries
     case abandonnerCapture, cloturerCapture, envoyerAuWorker
     case coller(String)
+    case ouvrirHistorique
     case pastille(EtatPastille)
 }
 
 /// Décide quoi faire, ne fait rien. Aucun accès au clavier, au micro ni à
 /// l'écran : c'est ce qui la rend testable en totalité.
 public struct MachineEtats {
-    public enum Etat: Equatable { case repos, capture(gardeFranchie: Bool), transcription }
+    public enum Etat: Equatable {
+        case repos, capture(gardeFranchie: Bool), captureVerrouillee, transcription
+    }
 
     public private(set) var etat: Etat = .repos
     public static let secondesParoleMinimum: Double = 0.4
@@ -55,6 +59,22 @@ public struct MachineEtats {
             // Le rotor est posé AVANT la clôture : celle-ci produit l'événement
             // suivant, dont l'état d'affichage doit pouvoir recouvrir le rotor
             // et non l'inverse.
+            return [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture]
+
+        // ── mode verrouillé : déclenché au clic, pas de touche à tenir ──
+        case (.repos, .clicPastille):
+            etat = .captureVerrouillee
+            return [.demarrerCapture, .armerDureeMax, .pastille(.ecoute)]
+
+        case (.repos, .tripleAppui):
+            return [.ouvrirHistorique]
+
+        // S'arrête sur l'APPUI de ⌘ droite, pas sur son relâchement : sinon
+        // relâcher la touche qu'on vient d'enfoncer couperait aussitôt.
+        case (.captureVerrouillee, .clicPastille),
+             (.captureVerrouillee, .appui),
+             (.captureVerrouillee, .dureeMax):
+            etat = .transcription
             return [.desarmerMinuteries, .pastille(.transcription), .cloturerCapture]
 
         case (.transcription, .captureAnalysee(let sec)):
