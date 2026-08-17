@@ -15,6 +15,26 @@ Dictée \(Version.courante) — dictée vocale locale
 switch CommandLine.arguments.dropFirst().first {
 case "--aide", "-h":
     print(aide)
+
+case "--test-micro":
+    let micro = Micro()
+    micro.preparer()
+    micro.surNiveau = { db in
+        let barres = Int(max(0, min(30, (db + 50) / 50 * 30)))
+        print("\r[" + String(repeating: "█", count: barres)
+              + String(repeating: " ", count: 30 - barres)
+              + String(format: "] %6.1f dBFS", db), terminator: "")
+        fflush(stdout)
+    }
+    print("Enregistrement 3 s — parle maintenant.")
+    try micro.demarrer()
+    Thread.sleep(forTimeInterval: 3)
+    let echantillons = micro.arreter()
+    let wav = try micro.ecrireWAV(echantillons)
+    print("\n\(echantillons.count) échantillons, "
+          + String(format: "%.2f s de parole", AudioWAV.secondesParlees(echantillons)))
+    print("WAV : \(wav.path)")
+
 case .some(let inconnu):
     FileHandle.standardError.write(Data("sous-commande inconnue : \(inconnu)\n".utf8))
     print(aide)
