@@ -25,8 +25,9 @@ machine.
 - **A pill at the right edge** shows what's happening: a wave of bars rides up
   it while you speak
 
-The Whisper model stays loaded in RAM (~1 GB), so a dictation comes back in
-1–2 seconds, every time.
+The Whisper model stays resident, so transcription is effectively free: a
+7-second clip comes back in **0.13 s** on an M5 Max, about 50× realtime. What
+you wait for is your own speech, not the model.
 
 ## Requirements
 
@@ -35,7 +36,7 @@ The Whisper model stays loaded in RAM (~1 GB), so a dictation comes back in
 - **macOS 14** or later
 - **Xcode** or the Command Line Tools (for `swift build`)
 - [**uv**](https://github.com/astral-sh/uv) — `brew install uv`
-- ~1 GB of RAM for the resident model, ~1.5 GB of disk for the model weights
+- ~250 MB of RAM for the resident worker, ~1.5 GB of disk for the model weights
   (downloaded once, into the shared Hugging Face cache)
 
 ## Install
