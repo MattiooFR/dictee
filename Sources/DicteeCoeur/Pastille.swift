@@ -1,50 +1,121 @@
 import AppKit
 import QuartzCore
 
-/// Fenêtre flottante collée au bord droit. Elle ne peut ni prendre le focus ni
-/// intercepter un clic : c'est ce qui garantit que le ⌘V du collage atterrit
-/// dans l'application où l'utilisateur écrivait.
+/// Panneau flottant collé au bord droit.
+///
+/// C'est un `NSPanel` non activant : il reçoit les clics **sans** devenir la
+/// fenêtre clé ni activer notre application. C'est ce qui laisse le focus à
+/// l'application où l'utilisateur écrivait, donc ce qui permet au ⌘V du
+/// collage d'atterrir au bon endroit.
 public final class Pastille {
-    static let cote: CGFloat = 120                                        // fenêtre
-    static let capsule = CGRect(x: 114, y: 36, width: 6, height: 48)      // au repos
-    static let bandeau = CGRect(x: 96, y: 8, width: 24, height: 104)      // actif
+    public enum Apparence: Equatable {
+        case repos, survol, actif
 
-    private let fenetre: NSWindow
+        /// Taille de la fenêtre. Elle épouse la forme pour ne pas avaler les
+        /// clics destinés à ce qu'il y a dessous — au bord droit de l'écran
+        /// vivent les barres de défilement.
+        var fenetre: NSSize {
+            switch self {
+            case .repos:  return NSSize(width: 14, height: 56)
+            case .survol: return NSSize(width: 20, height: 64)
+            case .actif:  return NSSize(width: 32, height: 112)
+            }
+        }
+        /// Taille de la forme dessinée, collée au bord droit de la fenêtre.
+        var forme: CGSize {
+            switch self {
+            case .repos:  return CGSize(width: 6, height: 48)
+            case .survol: return CGSize(width: 8, height: 52)
+            case .actif:  return CGSize(width: 24, height: 104)
+            }
+        }
+        var rayon: CGFloat {
+            switch self {
+            case .repos:  return 3
+            case .survol: return 4
+            case .actif:  return 12
+            }
+        }
+    }
+
+    private let fenetre: NSPanel
     private let vue: VuePastille
+    private var apparenceCourante: Apparence = .repos
+    private var etatCourant: EtatPastille = .repos
+
+    public var surClic: (() -> Void)? {
+        get { vue.surClic }
+        set { vue.surClic = newValue }
+    }
 
     public init() {
-        let taille = NSSize(width: Pastille.cote, height: Pastille.cote)
-        fenetre = NSWindow(contentRect: NSRect(origin: .zero, size: taille),
-                           styleMask: .borderless, backing: .buffered, defer: false)
+        let taille = Apparence.repos.fenetre
+        fenetre = NSPanel(contentRect: NSRect(origin: .zero, size: taille),
+                          styleMask: [.borderless, .nonactivatingPanel],
+                          backing: .buffered, defer: false)
         fenetre.isOpaque = false
         fenetre.backgroundColor = .clear
         fenetre.hasShadow = false
         fenetre.level = .screenSaver
         fenetre.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        fenetre.ignoresMouseEvents = true
+        fenetre.becomesKeyOnlyIfNeeded = true
+        fenetre.isFloatingPanel = true
+        fenetre.ignoresMouseEvents = false
 
         vue = VuePastille(frame: NSRect(origin: .zero, size: taille))
         fenetre.contentView = vue
         repositionner()
         fenetre.orderFrontRegardless()
+
+        vue.surApparence = { [weak self] a in self?.appliquer(a) }
+        vue.surEntree = { [weak self] in
+            guard let self, auRepos else { return }
+            appliquer(.survol)
+            vue.eclaircir(true)
+        }
+        vue.surSortie = { [weak self] in
+            guard let self, auRepos else { return }
+            appliquer(.repos)
+            vue.eclaircir(false)
+        }
         vue.afficher(.repos)
     }
 
+    private var auRepos: Bool { etatCourant == .repos }
+
     /// À rappeler au début de chaque dictée : l'écran actif peut avoir changé.
     public func repositionner() {
+        placer(apparenceCourante)
+    }
+
+    /// Redimensionne la fenêtre PUIS anime la forme. Jamais l'inverse, et
+    /// jamais pendant une animation en cours : `setFrame` sous animation
+    /// produit des sautillements.
+    func appliquer(_ a: Apparence) {
+        guard a != apparenceCourante else { return }
+        apparenceCourante = a
+        placer(a)
+        vue.reancrer()
+        vue.versForme(a)
+    }
+
+    private func placer(_ a: Apparence) {
         guard let ecran = NSScreen.main else { return }
         let c = ecran.frame
-        fenetre.setFrameOrigin(NSPoint(x: c.maxX - Pastille.cote,
-                                       y: c.midY - Pastille.cote / 2))
+        let t = a.fenetre
+        fenetre.setFrame(NSRect(x: c.maxX - t.width, y: c.midY - t.height / 2,
+                                width: t.width, height: t.height),
+                         display: true, animate: false)
     }
 
     public func afficher(_ etat: EtatPastille, persistant: Bool = false) {
+        etatCourant = etat
         vue.afficher(etat, persistant: persistant)
     }
 
     /// Convertit un niveau dBFS en [0,1] et le transmet au ressort.
     public func niveau(_ dbfs: Float) {
-        vue.viser(CGFloat(max(0, min(1, (dbfs + 50) / 50))))
+        vue.niveau(CGFloat(max(0, min(1, (dbfs + 50) / 50))))
     }
 }
 
@@ -57,6 +128,8 @@ final class VuePastille: NSView {
     /// Décalage, en images, entre deux barres voisines. C'est lui qui fait
     /// monter la vague le long du bandeau au lieu de tout faire pulser d'un bloc.
     private static let decalageImages = 4
+    /// Distance entre l'axe des barres et le bord droit de la fenêtre.
+    private static let axeDepuisBord: CGFloat = 12
 
     private let forme = CALayer()
     private let glyphe = CALayer()
@@ -84,6 +157,12 @@ final class VuePastille: NSView {
     /// n'est arrivé entre-temps.
     private var generation = 0
 
+    /// La vue ne connaît pas sa fenêtre : elle demande le redimensionnement.
+    var surApparence: ((Pastille.Apparence) -> Void)?
+    var surEntree: (() -> Void)?
+    var surSortie: (() -> Void)?
+    var surClic: (() -> Void)?
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         // Ordre imposé par AppKit pour une vue hôte de calque : `layer` d'abord,
@@ -93,36 +172,88 @@ final class VuePastille: NSView {
         layer = racine
         wantsLayer = true
 
-        forme.frame = Pastille.capsule
-        forme.cornerRadius = 3
-        forme.backgroundColor = NSColor(white: 0.35, alpha: 0.55).cgColor
-        // Le bandeau est au ras du bord droit : seuls les coins gauches sont
-        // arrondis, comme un tiroir qui sort de la tranche de l'écran.
+        // Ancrage à droite : quand la fenêtre grandit vers la gauche, la forme
+        // reste collée au bord et s'étire dans le bon sens — l'effet tiroir.
+        forme.anchorPoint = CGPoint(x: 1, y: 0.5)
+        forme.bounds = CGRect(origin: .zero, size: Pastille.Apparence.repos.forme)
+        forme.cornerRadius = Pastille.Apparence.repos.rayon
         forme.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        forme.backgroundColor = NSColor(white: 0.35, alpha: 0.55).cgColor
         racine.addSublayer(forme)
 
-        let centreX = Pastille.bandeau.midX
-        let hautDépart = Pastille.bandeau.minY + 12
-        let pas = (Pastille.bandeau.height - 24) / CGFloat(Self.nombreBarres - 1)
-        for k in 0..<Self.nombreBarres {
+        for _ in 0..<Self.nombreBarres {
             let b = CALayer()
             b.backgroundColor = NSColor(white: 1, alpha: 0.9).cgColor
             b.cornerRadius = Self.hauteurBarre / 2
             b.bounds = CGRect(x: 0, y: 0, width: Self.largeurMin, height: Self.hauteurBarre)
-            b.position = CGPoint(x: centreX, y: hautDépart + CGFloat(k) * pas)
             b.opacity = 0
             racine.addSublayer(b)
             barres.append(b)
         }
 
-        glyphe.frame = CGRect(x: centreX - 8, y: Pastille.bandeau.midY - 8,
-                              width: 16, height: 16)
+        // Dimensions en init, position dans `reancrer()` : régler `frame` ferait
+        // les deux à la fois et écraserait le repositionnement.
+        glyphe.bounds = CGRect(origin: .zero, size: CGSize(width: 16, height: 16))
         glyphe.contents = VuePastille.symbole("checkmark", taille: 13)
         glyphe.opacity = 0
         racine.addSublayer(glyphe)
+
+        reancrer()
     }
 
     required init?(coder: NSCoder) { fatalError("non utilisé") }
+
+    // ── survol et clic ────────────────────────────────────────────────────
+
+    /// `.activeAlways` est indispensable : les options par défaut ne délivrent
+    /// d'événements que si la fenêtre est clé, ce qu'un panneau non activant
+    /// n'est jamais.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for z in trackingAreas { removeTrackingArea(z) }
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.mouseEnteredAndExited, .activeAlways,
+                                                 .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { surEntree?() }
+    override func mouseExited(with event: NSEvent) { surSortie?() }
+    override func mouseDown(with event: NSEvent) { surClic?() }
+
+    // ── placement ─────────────────────────────────────────────────────────
+
+    /// Après un changement de taille de fenêtre : replace les calques dans les
+    /// nouvelles coordonnées, sans animation.
+    func reancrer() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        forme.position = CGPoint(x: bounds.maxX, y: bounds.midY)
+        glyphe.position = CGPoint(x: bounds.maxX - Self.axeDepuisBord, y: bounds.midY)
+        placerBarres()
+        CATransaction.commit()
+    }
+
+    func versForme(_ a: Pastille.Apparence) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.18)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        forme.bounds = CGRect(origin: .zero, size: a.forme)
+        forme.cornerRadius = a.rayon
+        CATransaction.commit()
+    }
+
+    private func placerBarres() {
+        let centreX = bounds.maxX - Self.axeDepuisBord
+        let hauteur = Pastille.Apparence.actif.forme.height
+        let depart = bounds.midY - hauteur / 2 + 12
+        let pas = (hauteur - 24) / CGFloat(Self.nombreBarres - 1)
+        for (k, b) in barres.enumerated() {
+            b.position = CGPoint(x: centreX, y: depart + CGFloat(k) * pas)
+        }
+    }
+
+    // ── états ─────────────────────────────────────────────────────────────
 
     /// `persistant` : l'état rouge ne revient pas au repos tout seul.
     /// Réservé aux autorisations manquantes, que seul l'utilisateur peut lever.
@@ -133,16 +264,19 @@ final class VuePastille: NSView {
         switch etat {
         case .repos:
             arreterAnimation()
-            versCapsule(couleur: NSColor(white: 0.35, alpha: 0.55))
+            surApparence?(.repos)
+            couleur(NSColor(white: 0.35, alpha: 0.55))
             glyphe.opacity = 0
 
         case .ecoute:
-            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
+            surApparence?(.actif)
+            couleur(NSColor(white: 0.08, alpha: 0.92))
             glyphe.opacity = 0
             demarrerAnimation(.voix)
 
         case .transcription:
-            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
+            surApparence?(.actif)
+            couleur(NSColor(white: 0.08, alpha: 0.92))
             glyphe.opacity = 0
             // Les mêmes barres, nourries par une onde lente : ça reste du
             // mouvement de la même famille, sans introduire un second langage.
@@ -150,7 +284,8 @@ final class VuePastille: NSView {
 
         case .succes:
             arreterAnimation()
-            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
+            surApparence?(.actif)
+            couleur(NSColor(white: 0.08, alpha: 0.92))
             glyphe.contents = VuePastille.symbole("checkmark", taille: 13,
                                                   couleur: .systemGreen)
             glyphe.opacity = 1
@@ -161,13 +296,15 @@ final class VuePastille: NSView {
             // `.transcription` (dictée silencieuse), pas seulement depuis un
             // appui bref où rien ne s'était ouvert.
             arreterAnimation()
-            versCapsule(couleur: NSColor(white: 0.35, alpha: 0.55))
+            surApparence?(.repos)
+            couleur(NSColor(white: 0.35, alpha: 0.55))
             glyphe.opacity = 0
             pulser()
 
         case .erreur:
             arreterAnimation()
-            versBandeau(couleur: NSColor.systemRed.withAlphaComponent(0.92))
+            surApparence?(.actif)
+            couleur(NSColor.systemRed.withAlphaComponent(0.92))
             glyphe.contents = VuePastille.symbole("exclamationmark", taille: 13)
             glyphe.opacity = 1
             if persistant { break }   // autorisation manquante : on reste rouge
@@ -175,10 +312,15 @@ final class VuePastille: NSView {
         }
     }
 
+    func eclaircir(_ actif: Bool) {
+        couleur(actif ? NSColor(white: 0.75, alpha: 0.85)
+                      : NSColor(white: 0.35, alpha: 0.55), duree: 0.15)
+    }
+
     // ── niveau de voix ────────────────────────────────────────────────────
 
     /// Niveau visé, dans [0,1]. Appelé ~46 fois par seconde pendant la capture.
-    func viser(_ n: CGFloat) { cible = max(0, min(1, n)) }
+    func niveau(_ n: CGFloat) { cible = max(0, min(1, n)) }
 
     private func demarrerAnimation(_ m: ModeAnimation) {
         mode = m
@@ -236,25 +378,12 @@ final class VuePastille: NSView {
         CATransaction.commit()
     }
 
-    // ── formes et animations ──────────────────────────────────────────────
+    // ── primitives d'animation ────────────────────────────────────────────
 
-    private func versCapsule(couleur: NSColor) {
+    private func couleur(_ c: NSColor, duree: CFTimeInterval = 0.18) {
         CATransaction.begin()
-        CATransaction.setAnimationDuration(0.18)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        forme.frame = Pastille.capsule
-        forme.cornerRadius = 3
-        forme.backgroundColor = couleur.cgColor
-        CATransaction.commit()
-    }
-
-    private func versBandeau(couleur: NSColor) {
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.18)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        forme.frame = Pastille.bandeau
-        forme.cornerRadius = 12
-        forme.backgroundColor = couleur.cgColor
+        CATransaction.setAnimationDuration(duree)
+        forme.backgroundColor = c.cgColor
         CATransaction.commit()
     }
 
