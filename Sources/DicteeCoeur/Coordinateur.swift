@@ -7,6 +7,8 @@ public final class Coordinateur {
     public static let gardeAppui: TimeInterval = 0.25
     public static let dureeMaximale: TimeInterval = 180
     public static let delaiWorker: TimeInterval = 30
+    public static let fenetreTripleAppui: TimeInterval = 0.9
+    public static let appuisPourHistorique = 3
 
     private var machine = MachineEtats()
     private let micro = Micro()
@@ -75,18 +77,55 @@ public final class Coordinateur {
         let d = Declencheur { [weak self] signal in
             guard let self else { return }
             switch signal {
-            case .appui:       appliquer(machine.recevoir(.appui))
-            case .relachement: appliquer(machine.recevoir(.relachement))
-            case .autreTouche: appliquer(machine.recevoir(.autreTouche))
+            case .appui:
+                instantAppui = Date()
+                appliquer(machine.recevoir(.appui))
+            case .relachement:
+                let bref = instantAppui.map {
+                    Date().timeIntervalSince($0) < Coordinateur.gardeAppui
+                } ?? false
+                instantAppui = nil
+                appliquer(machine.recevoir(.relachement))
+                if bref { compterAppuiBref() }
+            case .autreTouche:
+                appliquer(machine.recevoir(.autreTouche))
             }
         }
         try d.demarrer()
         declencheur = d
+
+        pastille.surClic = { [weak self] in
+            guard let self else { return }
+            appliquer(machine.recevoir(.clicPastille))
+        }
         journaliser("Dictée \(Version.courante) — maintiens ⌘ droite pour dicter")
     }
 
     private func appliquer(_ actions: [Action]) {
         for a in actions { executer(a) }
+    }
+
+    // ── comptage des appuis brefs ─────────────────────────────────────────
+
+    private var instantAppui: Date?
+    private var appuisBrefs = 0
+    private var fenetreTriple: DispatchWorkItem?
+
+    /// Un appui bref est un relâchement avant la garde. Le comptage vit ici et
+    /// pas dans la machine à états : c'est du temps, et la machine doit rester
+    /// pure pour rester testable.
+    private func compterAppuiBref() {
+        appuisBrefs += 1
+        fenetreTriple?.cancel()
+        if appuisBrefs >= Coordinateur.appuisPourHistorique {
+            appuisBrefs = 0
+            injecter(.tripleAppui)
+            return
+        }
+        let t = DispatchWorkItem { [weak self] in self?.appuisBrefs = 0 }
+        fenetreTriple = t
+        DispatchQueue.main.asyncAfter(deadline: .now() + Coordinateur.fenetreTripleAppui,
+                                      execute: t)
     }
 
     /// Réinjecte un événement produit par une action, **après** la fin du lot
