@@ -12,6 +12,7 @@ import time
 import mlx_whisper
 import numpy as np
 
+from audio import charger_wav
 from filtres import nettoyer, vocabulaire
 
 MODELE = "mlx-community/whisper-large-v3-turbo"
@@ -44,7 +45,7 @@ for ligne in sys.stdin:
     debut = time.time()
     try:
         resultat = mlx_whisper.transcribe(
-            chemin,
+            charger_wav(chemin),
             path_or_hf_repo=MODELE,
             language=LANGUE,
             initial_prompt=prompt or None,

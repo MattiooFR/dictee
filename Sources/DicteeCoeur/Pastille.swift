@@ -147,7 +147,12 @@ final class VuePastille: NSView {
             apres(0.25) { if g == self.generation { self.afficher(.repos) } }
 
         case .annule:
+            // Referme aussi le cercle : on peut arriver ici depuis `.transcription`
+            // (dictée silencieuse), et pas seulement depuis un appui bref où le
+            // cercle ne s'était jamais ouvert. Sans ça, l'arc tourne à l'infini.
             arreterRessort()
+            versCapsule(couleur: NSColor(white: 0.35, alpha: 0.55))
+            cacherArcEtGlyphe()
             pulser()
 
         case .erreur:
