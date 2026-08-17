@@ -7,7 +7,10 @@ cd "$(dirname "$0")"
 IDENTITE="Dictee Dev"
 APP="Dictee.app"
 
-if ! security find-identity -v -p codesigning | grep -q "$IDENTITE"; then
+# Sans -v : un certificat racine auto-signé n'est jamais « approuvé »
+# (CSSMERR_TP_NOT_TRUSTED) et -v l'écarterait. L'approbation sert à *vérifier*
+# une signature, pas à en produire une — codesign l'accepte très bien.
+if ! security find-identity -p codesigning | grep -q "$IDENTITE"; then
   echo "✗ certificat « $IDENTITE » absent."
   echo "  Trousseau d'accès → Assistant de certification → Créer un certificat"
   echo "  Nom : $IDENTITE · Type : Racine auto-signée · Certificat : Signature de code"

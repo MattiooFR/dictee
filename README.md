@@ -18,12 +18,25 @@ certificat* :
 - Type d'identité : **Racine auto-signée**
 - Type de certificat : **Signature de code**
 
-Vérifier : `security find-identity -v -p codesigning` doit lister `Dictee Dev`.
+Vérifier : `security find-identity -p codesigning` doit lister `Dictee Dev`.
+
+⚠️ **Sans le `-v`.** Un certificat racine auto-signé est toujours signalé
+`CSSMERR_TP_NOT_TRUSTED`, et `-v` l'écarterait. C'est normal et sans
+conséquence : l'approbation sert à *vérifier* une signature, pas à en produire
+une. `codesign` accepte parfaitement ce certificat.
 
 **Pourquoi c'est indispensable.** macOS rattache les autorisations
-(micro, entrées, accessibilité) à l'identité de code du binaire. Signée en
-ad-hoc, chaque recompilation produit une identité différente et **réinitialise
-les trois autorisations**.
+(micro, entrées, accessibilité) à l'identité de code, sous la forme d'une
+exigence désignée :
+
+```
+identifier "com.dugmedia.dictee" and certificate leaf = H"<hash du certificat>"
+```
+
+Identifiant de bundle + certificat, jamais le hash du binaire — donc les
+autorisations survivent aux recompilations. Signée en ad-hoc, l'app n'aurait
+que son hash comme identité et **les trois autorisations sauteraient à chaque
+build**.
 
 ### 2. Installer
 
