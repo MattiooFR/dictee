@@ -5,9 +5,9 @@ import QuartzCore
 /// intercepter un clic : c'est ce qui garantit que le ⌘V du collage atterrit
 /// dans l'application où l'utilisateur écrivait.
 public final class Pastille {
-    static let cote: CGFloat = 120          // côté de la fenêtre
-    static let capsule = CGRect(x: 114, y: 36, width: 6, height: 48)
-    static let cercle  = CGRect(x: 52, y: 32, width: 56, height: 56)
+    static let cote: CGFloat = 120                                        // fenêtre
+    static let capsule = CGRect(x: 114, y: 36, width: 6, height: 48)      // au repos
+    static let bandeau = CGRect(x: 96, y: 8, width: 24, height: 104)      // actif
 
     private let fenetre: NSWindow
     private let vue: VuePastille
@@ -49,18 +49,35 @@ public final class Pastille {
 }
 
 final class VuePastille: NSView {
-    private let anneau = CAShapeLayer()
+    // ── géométrie des barres ──────────────────────────────────────────────
+    private static let nombreBarres = 9
+    private static let hauteurBarre: CGFloat = 3
+    private static let largeurMin: CGFloat = 4
+    private static let largeurMax: CGFloat = 14
+    /// Décalage, en images, entre deux barres voisines. C'est lui qui fait
+    /// monter la vague le long du bandeau au lieu de tout faire pulser d'un bloc.
+    private static let decalageImages = 4
+
     private let forme = CALayer()
     private let glyphe = CALayer()
-    private let arc = CAShapeLayer()
+    private var barres: [CALayer] = []
 
-    // Ressort amorti : position/vitesse intégrées à chaque rafraîchissement.
+    // ── ressort amorti ────────────────────────────────────────────────────
     private var cible: CGFloat = 0
     private var courant: CGFloat = 0
     private var vitesse: CGFloat = 0
     private var lien: CADisplayLink?
     private static let raideur: CGFloat = 180
     private static let amortissement: CGFloat = 22
+
+    /// Historique circulaire du niveau lissé : chaque barre y lit une valeur
+    /// plus ancienne que sa voisine du dessous.
+    private var historique = [CGFloat](repeating: 0, count: 64)
+    private var curseur = 0
+
+    private enum ModeAnimation { case voix, attente }
+    private var mode: ModeAnimation = .voix
+    private var phaseAttente: CGFloat = 0
 
     /// Incrémentée à chaque changement d'état. Un retour différé (succès →
     /// repos, erreur → repos) ne s'applique que si aucun état plus récent
@@ -76,35 +93,31 @@ final class VuePastille: NSView {
         layer = racine
         wantsLayer = true
 
-        anneau.frame = Pastille.cercle
-        anneau.fillColor = nil
-        anneau.lineWidth = 2
-        anneau.strokeColor = NSColor(white: 1, alpha: 0.55).cgColor
-        anneau.path = CGPath(ellipseIn: CGRect(x: 2, y: 2, width: 52, height: 52),
-                             transform: nil)
-        anneau.opacity = 0
-        racine.addSublayer(anneau)
-
         forme.frame = Pastille.capsule
         forme.cornerRadius = 3
         forme.backgroundColor = NSColor(white: 0.35, alpha: 0.55).cgColor
+        // Le bandeau est au ras du bord droit : seuls les coins gauches sont
+        // arrondis, comme un tiroir qui sort de la tranche de l'écran.
+        forme.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
         racine.addSublayer(forme)
 
-        arc.frame = Pastille.cercle
-        arc.fillColor = nil
-        arc.lineWidth = 3
-        arc.lineCap = .round
-        arc.strokeColor = NSColor.white.cgColor
-        arc.opacity = 0
-        arc.path = CGPath(ellipseIn: CGRect(x: 14, y: 14, width: 28, height: 28),
-                          transform: nil)
-        arc.strokeStart = 0
-        arc.strokeEnd = 0.25
-        racine.addSublayer(arc)
+        let centreX = Pastille.bandeau.midX
+        let hautDépart = Pastille.bandeau.minY + 12
+        let pas = (Pastille.bandeau.height - 24) / CGFloat(Self.nombreBarres - 1)
+        for k in 0..<Self.nombreBarres {
+            let b = CALayer()
+            b.backgroundColor = NSColor(white: 1, alpha: 0.9).cgColor
+            b.cornerRadius = Self.hauteurBarre / 2
+            b.bounds = CGRect(x: 0, y: 0, width: Self.largeurMin, height: Self.hauteurBarre)
+            b.position = CGPoint(x: centreX, y: hautDépart + CGFloat(k) * pas)
+            b.opacity = 0
+            racine.addSublayer(b)
+            barres.append(b)
+        }
 
-        glyphe.frame = CGRect(x: Pastille.cercle.midX - 11, y: Pastille.cercle.midY - 11,
-                              width: 22, height: 22)
-        glyphe.contents = VuePastille.symbole("mic.fill", taille: 18)
+        glyphe.frame = CGRect(x: centreX - 8, y: Pastille.bandeau.midY - 8,
+                              width: 16, height: 16)
+        glyphe.contents = VuePastille.symbole("checkmark", taille: 13)
         glyphe.opacity = 0
         racine.addSublayer(glyphe)
     }
@@ -119,48 +132,43 @@ final class VuePastille: NSView {
 
         switch etat {
         case .repos:
-            arreterRessort()
+            arreterAnimation()
             versCapsule(couleur: NSColor(white: 0.35, alpha: 0.55))
-            cacherArcEtGlyphe()
+            glyphe.opacity = 0
 
         case .ecoute:
-            versCercle(couleur: NSColor(white: 0.08, alpha: 0.92))
-            arc.opacity = 0
-            arreterRotation()
-            glyphe.contents = VuePastille.symbole("mic.fill", taille: 18)
-            glyphe.opacity = 1
-            demarrerRessort()
+            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
+            glyphe.opacity = 0
+            demarrerAnimation(.voix)
 
         case .transcription:
-            arreterRessort()
-            versCercle(couleur: NSColor(white: 0.08, alpha: 0.92))
+            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
             glyphe.opacity = 0
-            arc.opacity = 1
-            demarrerRotation()
+            // Les mêmes barres, nourries par une onde lente : ça reste du
+            // mouvement de la même famille, sans introduire un second langage.
+            demarrerAnimation(.attente)
 
         case .succes:
-            arreterRessort()
-            arc.opacity = 0
-            arreterRotation()
-            glyphe.contents = VuePastille.symbole("checkmark", taille: 18, couleur: .systemGreen)
+            arreterAnimation()
+            versBandeau(couleur: NSColor(white: 0.08, alpha: 0.92))
+            glyphe.contents = VuePastille.symbole("checkmark", taille: 13,
+                                                  couleur: .systemGreen)
             glyphe.opacity = 1
-            apres(0.25) { if g == self.generation { self.afficher(.repos) } }
+            apres(0.35) { if g == self.generation { self.afficher(.repos) } }
 
         case .annule:
-            // Referme aussi le cercle : on peut arriver ici depuis `.transcription`
-            // (dictée silencieuse), et pas seulement depuis un appui bref où le
-            // cercle ne s'était jamais ouvert. Sans ça, l'arc tourne à l'infini.
-            arreterRessort()
+            // Referme aussi le bandeau : on peut arriver ici depuis
+            // `.transcription` (dictée silencieuse), pas seulement depuis un
+            // appui bref où rien ne s'était ouvert.
+            arreterAnimation()
             versCapsule(couleur: NSColor(white: 0.35, alpha: 0.55))
-            cacherArcEtGlyphe()
+            glyphe.opacity = 0
             pulser()
 
         case .erreur:
-            arreterRessort()
-            versCercle(couleur: NSColor.systemRed.withAlphaComponent(0.92))
-            arc.opacity = 0
-            arreterRotation()
-            glyphe.contents = VuePastille.symbole("exclamationmark", taille: 18)
+            arreterAnimation()
+            versBandeau(couleur: NSColor.systemRed.withAlphaComponent(0.92))
+            glyphe.contents = VuePastille.symbole("exclamationmark", taille: 13)
             glyphe.opacity = 1
             if persistant { break }   // autorisation manquante : on reste rouge
             apres(2.5) { if g == self.generation { self.afficher(.repos) } }
@@ -172,69 +180,83 @@ final class VuePastille: NSView {
     /// Niveau visé, dans [0,1]. Appelé ~46 fois par seconde pendant la capture.
     func viser(_ n: CGFloat) { cible = max(0, min(1, n)) }
 
-    private func demarrerRessort() {
+    private func demarrerAnimation(_ m: ModeAnimation) {
+        mode = m
+        if m == .attente { cible = 0 }
+        montrerBarres(true)
         guard lien == nil else { return }
-        anneau.opacity = 1
         let l = displayLink(target: self, selector: #selector(pas(_:)))
         l.add(to: .main, forMode: .common)
         lien = l
     }
 
-    private func arreterRessort() {
+    private func arreterAnimation() {
         lien?.invalidate(); lien = nil
-        anneau.opacity = 0
-        cible = 0; courant = 0; vitesse = 0
-        appliquerAnneau()
+        cible = 0; courant = 0; vitesse = 0; phaseAttente = 0
+        historique = [CGFloat](repeating: 0, count: historique.count)
+        montrerBarres(false)
+    }
+
+    private func montrerBarres(_ visible: Bool) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.15)
+        for b in barres { b.opacity = visible ? 1 : 0 }
+        CATransaction.commit()
     }
 
     @objc private func pas(_ lien: CADisplayLink) {
         let dt = CGFloat(min(lien.duration, 1.0 / 30))
-        let acceleration = Self.raideur * (cible - courant) - Self.amortissement * vitesse
-        vitesse += acceleration * dt
-        courant += vitesse * dt
-        appliquerAnneau()
+
+        switch mode {
+        case .voix:
+            let acceleration = Self.raideur * (cible - courant) - Self.amortissement * vitesse
+            vitesse += acceleration * dt
+            courant += vitesse * dt
+        case .attente:
+            phaseAttente += dt * 3.2
+            courant = 0.18 + 0.14 * (sin(phaseAttente) + 1) / 2
+        }
+
+        curseur = (curseur + 1) % historique.count
+        historique[curseur] = max(0, min(1, courant))
+        appliquerBarres()
     }
 
-    private func appliquerAnneau() {
+    private func appliquerBarres() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)   // sinon Core Animation anime chaque pas
-        let echelle = 1 + 0.45 * max(0, courant)
-        anneau.transform = CATransform3DMakeScale(echelle, echelle, 1)
-        anneau.opacity = Float(0.35 + 0.5 * max(0, min(1, courant)))
+        for (k, b) in barres.enumerated() {
+            let recul = k * Self.decalageImages
+            let i = (curseur - recul + historique.count * 2) % historique.count
+            let n = historique[i]
+            let largeur = Self.largeurMin + (Self.largeurMax - Self.largeurMin) * n
+            b.bounds = CGRect(x: 0, y: 0, width: largeur, height: Self.hauteurBarre)
+            b.opacity = Float(0.45 + 0.55 * n)
+        }
         CATransaction.commit()
     }
 
     // ── formes et animations ──────────────────────────────────────────────
 
     private func versCapsule(couleur: NSColor) {
-        forme.frame = Pastille.capsule
-        forme.cornerRadius = 3
-        forme.backgroundColor = couleur.cgColor
-    }
-
-    private func versCercle(couleur: NSColor) {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.18)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        forme.frame = Pastille.cercle
-        forme.cornerRadius = Pastille.cercle.width / 2
+        forme.frame = Pastille.capsule
+        forme.cornerRadius = 3
         forme.backgroundColor = couleur.cgColor
         CATransaction.commit()
     }
 
-    private func cacherArcEtGlyphe() { glyphe.opacity = 0; arc.opacity = 0; arreterRotation() }
-
-    private func demarrerRotation() {
-        guard arc.animation(forKey: "rotation") == nil else { return }
-        let a = CABasicAnimation(keyPath: "transform.rotation.z")
-        a.fromValue = 0
-        a.toValue = -Double.pi * 2
-        a.duration = 0.9
-        a.repeatCount = .infinity
-        arc.add(a, forKey: "rotation")
+    private func versBandeau(couleur: NSColor) {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.18)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        forme.frame = Pastille.bandeau
+        forme.cornerRadius = 12
+        forme.backgroundColor = couleur.cgColor
+        CATransaction.commit()
     }
-
-    private func arreterRotation() { arc.removeAnimation(forKey: "rotation") }
 
     private func pulser() {
         let a = CAKeyframeAnimation(keyPath: "opacity")
@@ -251,7 +273,7 @@ final class VuePastille: NSView {
     /// Rend un symbole SF teinté, prêt à servir de `contents` de calque.
     static func symbole(_ nom: String, taille: CGFloat,
                         couleur: NSColor = .white) -> CGImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: taille, weight: .medium)
+        let config = NSImage.SymbolConfiguration(pointSize: taille, weight: .semibold)
         guard let brut = NSImage(systemSymbolName: nom, accessibilityDescription: nil)?
             .withSymbolConfiguration(config) else { return nil }
         let teinte = NSImage(size: brut.size, flipped: false) { rect in
