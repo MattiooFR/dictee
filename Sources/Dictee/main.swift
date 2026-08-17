@@ -35,6 +35,13 @@ case "--test-micro":
           + String(format: "%.2f s de parole", AudioWAV.secondesParlees(echantillons)))
     print("WAV : \(wav.path)")
 
+case "--test-collage":
+    let texte = CommandLine.arguments.dropFirst(2).first ?? "essai de collage Dictée"
+    print("Passe dans l'app cible : collage dans 3 s…")
+    Thread.sleep(forTimeInterval: 3)
+    Collage.coller(texte)
+    print("collé.")
+
 case .some(let inconnu):
     FileHandle.standardError.write(Data("sous-commande inconnue : \(inconnu)\n".utf8))
     print(aide)
