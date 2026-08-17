@@ -4,3 +4,6 @@
 .DS_Store
 __pycache__/
 worker/tests/fixtures/
+
+# Specs et plans de conception : gardés en local, non publiés
+docs/

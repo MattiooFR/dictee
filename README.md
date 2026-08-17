@@ -1,192 +1,228 @@
 # Dictée
 
-Dictée vocale globale sur macOS, 100 % locale. Maintiens **⌘ droite**, parle,
-relâche : le texte s'insère là où est ton curseur, dans n'importe quelle
-application.
+Hold **Right ⌘**, speak, release. The text appears at your cursor, in any app.
 
-Aucun appel réseau, aucun abonnement. La reconnaissance tourne sur le GPU de la
-machine avec `mlx-whisper large-v3-turbo`, en français.
+100% local speech-to-text for macOS, running `mlx-whisper large-v3-turbo` on
+your Mac's GPU. No network calls, no subscription, no audio ever leaves the
+machine.
 
-## Installation
+*[Version française](README.fr.md)*
 
-### 1. Créer le certificat de signature (une seule fois)
+> **Currently French-only.** The model is pinned to `language="fr"` for
+> accuracy. Changing it is a one-line edit — see
+> [Using another language](#using-another-language).
 
-Trousseau d'accès → menu **Assistant de certification** → *Créer un
-certificat* :
+---
 
-- Nom : `Dictee Dev`
-- Type d'identité : **Racine auto-signée**
-- Type de certificat : **Signature de code**
+## What it does
 
-Vérifier : `security find-identity -p codesigning` doit lister `Dictee Dev`.
+- **Push-to-talk on Right ⌘** — a key macOS does nothing with when held alone,
+  so there is no shortcut to sacrifice
+- **Click-to-record** — click the edge pill to record hands-free; click again
+  or press Right ⌘ to stop
+- **Every dictation is kept** — triple-tap Right ⌘ to open a searchable
+  history window
+- **A pill at the right edge** shows what's happening: a wave of bars rides up
+  it while you speak
 
-⚠️ **Sans le `-v`.** Un certificat racine auto-signé est toujours signalé
-`CSSMERR_TP_NOT_TRUSTED`, et `-v` l'écarterait. C'est normal et sans
-conséquence : l'approbation sert à *vérifier* une signature, pas à en produire
-une. `codesign` accepte parfaitement ce certificat.
+The Whisper model stays loaded in RAM (~1 GB), so a dictation comes back in
+1–2 seconds, every time.
 
-**Pourquoi c'est indispensable.** macOS rattache les autorisations
-(micro, entrées, accessibilité) à l'identité de code, sous la forme d'une
-exigence désignée :
+## Requirements
+
+- **Apple Silicon Mac** — `mlx-whisper` is built on Apple's MLX framework and
+  will not run on Intel
+- **macOS 14** or later
+- **Xcode** or the Command Line Tools (for `swift build`)
+- [**uv**](https://github.com/astral-sh/uv) — `brew install uv`
+- ~1 GB of RAM for the resident model, ~1.5 GB of disk for the model weights
+  (downloaded once, into the shared Hugging Face cache)
+
+## Install
+
+### 1. Create a self-signed code-signing certificate (once)
+
+Keychain Access → menu **Certificate Assistant** → *Create a Certificate*:
+
+- Name: `Dictee Dev`
+- Identity Type: **Self Signed Root**
+- Certificate Type: **Code Signing**
+
+Verify with `security find-identity -p codesigning` — it should list
+`Dictee Dev`.
+
+> **Note the missing `-v`.** A self-signed root always reports
+> `CSSMERR_TP_NOT_TRUSTED`, and `-v` filters it out. That is expected and
+> harmless: trust is about *verifying* a signature, not producing one.
+> `codesign` accepts the certificate fine.
+
+**Why this matters.** macOS ties permissions (microphone, input monitoring,
+accessibility) to the app's code identity, expressed as a designated
+requirement:
 
 ```
-identifier "com.dugmedia.dictee" and certificate leaf = H"<hash du certificat>"
+identifier "com.dugmedia.dictee" and certificate leaf = H"<certificate hash>"
 ```
 
-Identifiant de bundle + certificat, jamais le hash du binaire — donc les
-autorisations survivent aux recompilations. Signée en ad-hoc, l'app n'aurait
-que son hash comme identité et **les trois autorisations sauteraient à chaque
-build**.
+Bundle identifier plus certificate — never the binary hash. That is what lets
+your permissions survive a rebuild. Signed ad-hoc, the app's only identity
+would be its hash, and **all three permissions would reset on every build**.
 
-### 2. Installer
+### 2. Build and install
 
 ```bash
+git clone https://github.com/MattiooFR/dictee.git
+cd dictee
 ./install.sh
 ```
 
-Le script compile l'app, crée le venv Python, installe le vocabulaire et pose
-le LaunchAgent (démarrage automatique à l'ouverture de session).
+This builds the app, creates the Python virtualenv, installs a starter
+vocabulary and registers a LaunchAgent so Dictée starts at login.
 
-### 3. Accorder les trois autorisations
+### 3. Grant three permissions
 
-| Autorisation | Pourquoi | Où |
+| Permission | Why | Where |
 |---|---|---|
-| Surveillance des entrées | Écouter ⌘ droite | Réglages → Confidentialité et sécurité |
-| Accessibilité | Poster le ⌘V du collage | Réglages → Confidentialité et sécurité |
-| Micro | Capturer la voix | Boîte de dialogue au démarrage |
+| Input Monitoring | Listen for Right ⌘ | Settings → Privacy & Security |
+| Accessibility | Post the synthetic ⌘V | Settings → Privacy & Security |
+| Microphone | Capture your voice | Dialog on first launch |
 
-Les trois sont demandées **au démarrage**, jamais en pleine dictée : une boîte
-de dialogue pendant un push-to-talk ferait perdre la phrase.
+All three are requested **at startup**, never mid-dictation — a permission
+dialog during push-to-talk would swallow your sentence.
 
-Tant qu'il en manque une, la pastille reste rouge et l'app attend. **Rien à
-relancer** : elle teste toutes les 2 s et démarre d'elle-même dès que tu
-accordes. Le journal dit laquelle manque.
+While any is missing, the pill stays red and the app waits. **Nothing to
+restart**: it re-checks every 2 seconds and starts on its own once you grant.
+The log tells you which one is missing.
 
-## Utilisation
+## Usage
 
-Maintiens ⌘ droite, parle, relâche. La pastille au bord droit de l'écran
-indique l'état :
+Hold Right ⌘, speak, release. The pill at the right edge of the screen shows
+the state:
 
-| Pastille | État |
+| Pill | State |
 |---|---|
-| Fine barre grise au ras du bord | Au repos |
-| Barre élargie et éclaircie | La souris la survole |
-| Bandeau noir, vague de barres qui monte | J'écoute |
-| Bandeau noir, ondulation lente | Je transcris |
-| Coche verte | Texte inséré |
-| Pulsation grise | Annulé (appui trop court, ou rien dit) |
-| Bandeau rouge | Erreur — détail dans le journal |
+| Thin grey bar, flush to the edge | Idle |
+| Wider, lighter bar | Your mouse is hovering it |
+| Dark band, wave of bars riding up | Listening |
+| Dark band, slow ripple | Transcribing |
+| Green checkmark | Text inserted |
+| Grey pulse | Cancelled — tap too short, or nothing said |
+| Red band | Error — details in the log |
 
-Un appui bref sur ⌘ droite ne déclenche rien, et ⌘ droite + une autre touche
-reste un raccourci normal.
+A quick tap does nothing, and Right ⌘ + any other key stays a normal shortcut:
+the event tap is passive and never swallows your keystrokes.
 
-## Vocabulaire
+**Hands-free**: click the pill to start recording without holding anything.
+Click again, or press Right ⌘, to stop. In this mode typing does not cancel.
 
-`~/.config/dictee/vocabulaire.txt` — un terme par ligne. Sans lui,
-« netlinking » devient « net linking ».
+**History**: triple-tap Right ⌘.
 
-**Maximum 60 termes.** `initial_prompt` est plafonné à 224 tokens côté Whisper :
-au-delà, il *dégrade* la transcription au lieu de l'améliorer. Le worker tronque
-et prévient dans le journal.
-
-Relancer l'app après modification :
-`launchctl kickstart -k gui/$UID/com.dugmedia.dictee`
-
-## Historique
-
-Toutes les dictées sont conservées dans `~/.config/dictee/historique.jsonl`
-(une ligne JSON par dictée, ~200 octets). Seul le texte est gardé, jamais
-l'audio.
-
-**Trois appuis brefs sur ⌘ droite** ouvrent la fenêtre de consultation.
-
-| Geste | Effet |
+| Key | Action |
 |---|---|
-| Champ de recherche | Filtre à la frappe, insensible à la casse et aux accents |
-| Clic sur une ligne | Le texte part dans le presse-papier |
-| ⏎ | Le texte est recollé dans l'application d'où tu venais |
-| ⌫ | L'entrée est supprimée |
-| Échap | La fenêtre se ferme |
+| Search field | Filters as you type, ignoring case and accents |
+| Click a row | Copies the text |
+| ⏎ | Pastes it back into the app you came from |
+| ⌫ | Deletes the entry |
+| Esc | Closes the window |
 
-## Enregistrer sans tenir la touche
+Everything is stored as JSON Lines in `~/.config/dictee/historique.jsonl`
+(~200 bytes per dictation). Only text is kept — audio is never stored, and the
+temporary WAV is deleted right after transcription.
 
-La barre au repos **se réveille au survol**. Un clic dessus démarre un
-enregistrement verrouillé : plus besoin de maintenir ⌘ droite. Un second clic,
-ou un appui sur ⌘ droite, arrête et transcrit.
+## Vocabulary
 
-En mode verrouillé, taper au clavier n'annule pas — contrairement au
-push-to-talk, où ⌘ droite + une touche reste un raccourci normal.
+Whisper mangles words it has never seen: *netlinking* becomes *net linking*,
+*Supabase* becomes *super base*. Seeding it with your own terms fixes this.
 
-## Diagnostic
+Edit `~/.config/dictee/vocabulaire.txt`, one term per line, then restart:
 
 ```bash
-tail -f ~/Library/Logs/dictee.log     # journal
-
-swift run Dictee --test-micro          # vumètre + WAV de 3 s
-swift run Dictee --test-clavier        # journalise les appuis sur ⌘ droite
-swift run Dictee --test-collage TEXTE  # colle TEXTE après 3 s
-swift run Dictee --test-pastille       # fait défiler les six états
+launchctl kickstart -k gui/$UID/com.dugmedia.dictee
 ```
 
-Chaque module se vérifie seul, sans le reste de l'application.
+**Keep it under 60 terms.** Whisper caps `initial_prompt` at 224 tokens, and
+going over *degrades* transcription rather than improving it. The worker
+truncates and warns in the log. Twenty terms that matter beat sixty at random.
 
-## Tests
+## Using another language
+
+The model is pinned to French in `worker/transcribe.py`:
+
+```python
+LANGUE = "fr"
+```
+
+Change it to any [Whisper language code](https://github.com/openai/whisper#available-models-and-languages)
+(`"en"`, `"es"`, `"de"`…) and restart. Forcing a language is deliberate:
+auto-detection misfires on short clips and on sentences full of foreign
+technical terms, which is most of what people dictate.
+
+Making this configurable without editing code would be a welcome contribution.
+
+## How it works
+
+```
+ Right ⌘ ─▶ Dictee.app (Swift, LSUIElement agent)
+              ├─ CGEventTap (passive)     listens for Right ⌘
+              ├─ AVAudioEngine            audio + RMS level
+              ├─ NSPanel (non-activating) the pill, clickable
+              ├─ NSPasteboard + CGEvent   the paste
+              ├─ JSONL history            ~/.config/dictee
+              └─▶ Python worker (child process, stdin/stdout)
+                    └─ mlx-whisper large-v3-turbo, model resident in RAM
+```
+
+Two processes, one lifetime. The LaunchAgent starts the app at login; the app
+starts the Python worker and keeps it alive, restarting it if it dies. The
+worker's contract is one WAV path per line on stdin, one JSON line back on
+stdout.
+
+Three design decisions worth knowing about:
+
+- **The event tap is passive** (`listenOnly`), so Right ⌘ keeps working in
+  every shortcut you already use.
+- **The pill is a non-activating `NSPanel`** sized to its own shape. It
+  receives clicks without stealing focus — which is what lets the synthetic
+  ⌘V land in the app you were writing in — and it stays small enough not to
+  swallow clicks meant for a scrollbar underneath.
+- **Recording starts before the 250 ms guard**, so the first word is never
+  clipped; the pill only opens once the guard passes, so a Right ⌘ shortcut
+  does not make it flash.
+
+## Development
 
 ```bash
-swift test                                                    # 41 tests
-.venv/bin/python -m pytest worker/tests/test_filtres.py -q     # 9 tests
+swift build
+swift test                                                   # 41 tests
+
+.venv/bin/python -m pytest worker/tests/test_filtres.py -q    # fast
+.venv/bin/python -m pytest worker/tests/test_audio.py -q      # fast
 .venv/bin/python -m pytest worker/tests/test_integration.py \
-  -q -m lent -c worker/pytest.ini                              # 2 tests (charge le modèle)
+  -q -m lent -c worker/pytest.ini                             # loads the model
 ```
 
-## Checklist de vérification manuelle
+Each system-facing module has a standalone diagnostic subcommand, so you can
+check one piece without the rest of the app:
 
-Ce qu'aucun test automatisé ne couvre : le tap système, la pastille à l'écran,
-le collage dans une vraie application. À dérouler après chaque `./build.sh`.
-
-- [ ] Les trois autorisations sont **toujours** accordées (si elles sautent,
-      le certificat de signature a changé)
-- [ ] `swift test` : 41 tests au vert
-- [ ] `.venv/bin/python -m pytest worker/tests/test_filtres.py -q` : 9 au vert
-- [ ] Dictée nominale de 3 s dans TextEdit → texte inséré
-- [ ] Même chose dans Chrome, Slack et VS Code
-- [ ] ⌘ droite brève → pulsation grise, rien d'inséré
-- [ ] ⌘ droite + C → copie normale, aucune dictée
-- [ ] ⌘ **gauche** maintenue → aucune réaction
-- [ ] Silence de 3 s sous ⌘ droite → pulsation grise, aucune ligne worker
-      dans le journal
-- [ ] Pastille visible au-dessus d'une fenêtre en plein écran
-- [ ] Sur un second écran : la pastille se repositionne à la dictée suivante
-- [ ] Au repos, **aucun point orange** micro dans la barre de menus
-- [ ] Après redémarrage du Mac, la dictée fonctionne sans rien relancer
-- [ ] Clic sur la pastille → enregistre sans tenir de touche ; second clic →
-      **le texte atterrit dans l'application d'origine** (valide le panneau
-      non activant)
-- [ ] Pendant un enregistrement verrouillé, taper au clavier n'annule pas
-- [ ] Survol de la barre au repos → elle s'élargit et s'éclaircit
-- [ ] Clic juste à côté de la pastille → traverse vers l'app du dessous
-- [ ] Trois appuis brefs sur ⌘ droite ouvrent la fenêtre ; deux ne l'ouvrent pas
-- [ ] Trois appuis brefs ne produisent ni saccade audio ni clignotement de
-      l'indicateur micro
-- [ ] Dans la fenêtre : la recherche filtre, un clic copie, ⏎ recolle **dans
-      l'app d'où l'on venait**, ⌫ supprime, Échap ferme
-- [ ] Après suppression et redémarrage, l'entrée n'est pas revenue
-
-## Architecture
-
-Designs et plans dans `docs/superpowers/` :
-
-- v0.1 — dictée, collage, pastille : `specs/2026-08-17-dictee-design.md`
-- v0.2 — historique, fenêtre, pastille interactive :
-  `specs/2026-08-17-dictee-historique-design.md`
-
+```bash
+swift run Dictee --test-micro          # VU meter, writes a 3 s WAV
+swift run Dictee --test-clavier        # logs Right ⌘ presses
+swift run Dictee --test-collage TEXT   # pastes TEXT after 3 s
+swift run Dictee --test-pastille       # cycles through the pill states
 ```
- ⌘ droite ─▶ Dictee.app (Swift, agent LSUIElement)
-                ├─ CGEventTap passif       (écoute ⌘ droite)
-                ├─ AVAudioEngine           (audio + niveau RMS)
-                ├─ NSPanel non activant    (la pastille, cliquable)
-                ├─ NSPasteboard + CGEvent  (le collage)
-                ├─ Historique JSONL        (~/.config/dictee)
-                └─▶ worker Python (enfant, stdin/stdout)
-                       └─ mlx-whisper large-v3-turbo, modèle résident
-```
+
+The event tap, the pill rendering and the paste depend on the window server,
+audio hardware and TCC state — they are verified by a manual checklist in
+[README.fr.md](README.fr.md), not by automated tests. The code and comments
+are in French.
+
+## Known limitations
+
+- Apple Silicon only
+- French by default (one-line change, see above)
+- No settings UI — configuration is two text files
+- Right ⌘ is not remappable without editing `Declencheur.swift`
+
+## License
+
+MIT — see [LICENSE](LICENSE).

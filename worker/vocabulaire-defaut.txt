@@ -1,33 +1,31 @@
 # Vocabulaire d'amorçage — un terme par ligne, 60 maximum.
-# Sans lui, « netlinking » devient « net linking ».
-# initial_prompt est plafonné à 224 tokens : au-delà, il DÉGRADE la
-# transcription au lieu de l'améliorer. Ajouter avec parcimonie.
-netlinking
-backlink
-ancre
-Trust Flow
-Citation Flow
-referring domains
-Majestic
-Ahrefs
-Semrush
-Search Console
-domaine expiré
-PBN
-guest post
-indexation
-redirection 301
-LinkQuiver
-GetLinkFast
+#
+# Sans lui, Whisper coupe les mots qu'il ne connaît pas : « netlinking »
+# devient « net linking », « Supabase » devient « super base ».
+#
+# ⚠️ Le prompt est plafonné à 224 tokens côté Whisper. Au-delà, il DÉGRADE la
+# transcription au lieu de l'améliorer — le worker tronque et prévient dans le
+# journal. Mieux vaut 20 termes qui comptent vraiment que 60 au hasard.
+#
+# Cette liste n'est qu'un exemple. Remplace-la par TON vocabulaire :
+# noms de tes projets, de tes clients, de tes outils, jargon de ton métier.
+# Fichier : ~/.config/dictee/vocabulaire.txt
+
+# — exemples : outils de développement —
 Supabase
-Trigger.dev
 Cloudflare
-Workers
-Wrangler
-Next.js
+Kubernetes
+PostgreSQL
 TypeScript
-Vercel
-Stripe
-PostHog
-Claude
-Anthropic
+Next.js
+Docker
+Terraform
+webhook
+pull request
+
+# — exemples : jargon métier —
+churn
+onboarding
+roadmap
+backlog
+sprint
