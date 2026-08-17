@@ -86,5 +86,16 @@ case .some(let inconnu):
     print(aide)
     exit(2)
 case nil:
-    print("mode application : pas encore câblé (tâche 11)")
+    let racine = URL(fileURLWithPath:
+        ProcessInfo.processInfo.environment["DICTEE_ROOT"]
+        ?? FileManager.default.currentDirectoryPath)
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)   // agent : pas d'icône dans le Dock
+    let coordinateur = Coordinateur(racine: racine)
+    do { try coordinateur.demarrer() }
+    catch {
+        FileHandle.standardError.write(Data("démarrage impossible : \(error)\n".utf8))
+        exit(1)
+    }
+    app.run()
 }
