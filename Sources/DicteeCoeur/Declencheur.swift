@@ -24,6 +24,12 @@ public final class Declencheur {
     /// Accessibilité — nécessaire pour poster le ⌘V du collage.
     public static func accessibiliteAccordee() -> Bool { AXIsProcessTrusted() }
 
+    /// Affiche la boîte de dialogue système, qui propose d'ouvrir les Réglages.
+    public static func demanderAccessibilite() {
+        let cle = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([cle: true] as CFDictionary)
+    }
+
     public func demarrer() throws {
         let masque = (1 << CGEventType.flagsChanged.rawValue)
                    | (1 << CGEventType.keyDown.rawValue)

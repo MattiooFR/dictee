@@ -1,10 +1,6 @@
 import AppKit
 import Foundation
 
-public enum ErreurDemarrage: Error, Equatable {
-    case surveillanceRefusee, accessibiliteRefusee
-}
-
 /// Seul endroit qui traduit une `Action` en effet réel.
 /// La machine à états décide, le coordinateur exécute.
 public final class Coordinateur {
@@ -29,17 +25,44 @@ public final class Coordinateur {
             delai: Coordinateur.delaiWorker)
     }
 
-    public func demarrer() throws {
-        guard Declencheur.autorisationAccordee() else {
-            Declencheur.demanderAutorisation()
-            pastille.afficher(.erreur("surveillance des entrées refusée"))
-            throw ErreurDemarrage.surveillanceRefusee
-        }
-        guard Declencheur.accessibiliteAccordee() else {
-            pastille.afficher(.erreur("accessibilité refusée"))
-            throw ErreurDemarrage.accessibiliteRefusee
+    /// Ne sort jamais sur une autorisation manquante : la pastille reste rouge
+    /// et l'app démarre d'elle-même dès que l'utilisateur accorde. Sortir
+    /// mettrait le LaunchAgent en boucle de relance.
+    public func demarrer() {
+        attendreLesAutorisations()
+    }
+
+    private var autorisationsDemandees = false
+
+    private func autorisationManquante() -> String? {
+        if !Declencheur.autorisationAccordee() { return "surveillance des entrées" }
+        if !Declencheur.accessibiliteAccordee() { return "accessibilité" }
+        return nil
+    }
+
+    private func attendreLesAutorisations() {
+        guard let quoi = autorisationManquante() else {
+            do { try demarrerVraiment() }
+            catch { journaliser("démarrage impossible : \(error)") }
+            return
         }
 
+        if !autorisationsDemandees {
+            autorisationsDemandees = true
+            Declencheur.demanderAutorisation()
+            Declencheur.demanderAccessibilite()
+            journaliser("⚠️ autorisation manquante : \(quoi)")
+            journaliser("   Réglages → Confidentialité et sécurité → ajouter Dictee.app")
+            journaliser("   j'attends ; la dictée démarrera toute seule dès que ce sera accordé")
+        }
+        pastille.afficher(.erreur(quoi), persistant: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.attendreLesAutorisations()
+        }
+    }
+
+    private func demarrerVraiment() throws {
+        pastille.afficher(.repos)
         micro.preparer()
         micro.surNiveau = { [weak self] db in self?.pastille.niveau(db) }
         transcripteur.surJournal = { journaliser($0) }

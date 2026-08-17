@@ -38,7 +38,9 @@ public final class Pastille {
                                        y: c.midY - Pastille.cote / 2))
     }
 
-    public func afficher(_ etat: EtatPastille) { vue.afficher(etat) }
+    public func afficher(_ etat: EtatPastille, persistant: Bool = false) {
+        vue.afficher(etat, persistant: persistant)
+    }
 
     /// Convertit un niveau dBFS en [0,1] et le transmet au ressort.
     public func niveau(_ dbfs: Float) {
@@ -59,6 +61,11 @@ final class VuePastille: NSView {
     private var lien: CADisplayLink?
     private static let raideur: CGFloat = 180
     private static let amortissement: CGFloat = 22
+
+    /// Incrémentée à chaque changement d'état. Un retour différé (succès →
+    /// repos, erreur → repos) ne s'applique que si aucun état plus récent
+    /// n'est arrivé entre-temps.
+    private var generation = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -104,7 +111,12 @@ final class VuePastille: NSView {
 
     required init?(coder: NSCoder) { fatalError("non utilisé") }
 
-    func afficher(_ etat: EtatPastille) {
+    /// `persistant` : l'état rouge ne revient pas au repos tout seul.
+    /// Réservé aux autorisations manquantes, que seul l'utilisateur peut lever.
+    func afficher(_ etat: EtatPastille, persistant: Bool = false) {
+        generation += 1
+        let g = generation
+
         switch etat {
         case .repos:
             arreterRessort()
@@ -132,7 +144,7 @@ final class VuePastille: NSView {
             arreterRotation()
             glyphe.contents = VuePastille.symbole("checkmark", taille: 18, couleur: .systemGreen)
             glyphe.opacity = 1
-            apres(0.25) { self.afficher(.repos) }
+            apres(0.25) { if g == self.generation { self.afficher(.repos) } }
 
         case .annule:
             arreterRessort()
@@ -145,7 +157,8 @@ final class VuePastille: NSView {
             arreterRotation()
             glyphe.contents = VuePastille.symbole("exclamationmark", taille: 18)
             glyphe.opacity = 1
-            apres(2.5) { self.afficher(.repos) }
+            if persistant { break }   // autorisation manquante : on reste rouge
+            apres(2.5) { if g == self.generation { self.afficher(.repos) } }
         }
     }
 
