@@ -1,0 +1,5 @@
+.build/
+.venv/
+*.app/
+.DS_Store
+__pycache__/
