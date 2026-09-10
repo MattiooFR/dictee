@@ -12,8 +12,10 @@ CONFIG="$HOME/.config/dictee"
 if [ ! -x .venv/bin/python ]; then
   echo "→ création du venv"
   uv venv --python 3.11
-  uv pip install --python .venv/bin/python -r worker/requirements.txt
 fi
+# Vérifie aussi les dépendances lors d'une mise à jour d'un venv existant.
+uv pip sync --python .venv/bin/python worker/requirements.lock
+.venv/bin/python worker/installer_modele.py
 
 mkdir -p "$CONFIG"
 if [ ! -f "$CONFIG/vocabulaire.txt" ]; then
@@ -49,7 +51,7 @@ cat <<'FIN'
 ✓ installé.
 
 Trois autorisations à accorder, dans cet ordre :
-  1. Micro           — demandé automatiquement à la première dictée
+  1. Micro           — demandé au démarrage
   2. Surveillance des entrées — Réglages → Confidentialité et sécurité
   3. Accessibilité   — Réglages → Confidentialité et sécurité
 

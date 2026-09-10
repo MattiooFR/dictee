@@ -3,7 +3,7 @@ import Foundation
 
 /// Seul endroit qui traduit une `Action` en effet réel.
 /// La machine à états décide, le coordinateur exécute.
-public final class Coordinateur {
+public final class Coordinateur: NSObject, NSMenuDelegate {
     public static let gardeAppui: TimeInterval = 0.25
     public static let dureeMaximale: TimeInterval = 180
     public static let delaiWorker: TimeInterval = 30
@@ -20,6 +20,13 @@ public final class Coordinateur {
     private var dureeMaxEnCours: DispatchWorkItem?
     private var wavCourant: URL?
     private var dernierDelai: Double = 0
+    private var configuration: Configuration
+    private let audios = AudioEnAttente()
+    private let fileAudio = DispatchQueue(label: "dictee.audio.fichiers", qos: .userInitiated)
+    private var barre: NSStatusItem?
+    private var nettoyage: Timer?
+    private var relachementDepuis: TimeInterval?
+
 
     private let historique: Historique
     private lazy var fenetreHistorique: FenetreHistorique = {
@@ -31,12 +38,17 @@ public final class Coordinateur {
     }()
 
     public init(racine: URL) {
+        let config = Configuration.charger()
+        configuration = config
         transcripteur = Transcripteur(
             executable: racine.appendingPathComponent(".venv/bin/python"),
             arguments: [racine.appendingPathComponent("worker/transcribe.py").path],
-            delai: Coordinateur.delaiWorker)
+            delai: Coordinateur.delaiWorker,
+            inactivite: config.toujoursPret ? 0 : config.inactiviteSecondes,
+            purgeApres: config.purgeSecondes, cacheMo: config.cacheMo)
         historique = Historique(fichier: FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/dictee/historique.jsonl"))
+        super.init()
     }
 
     /// Ne sort jamais sur une autorisation manquante : la pastille reste rouge
@@ -84,7 +96,16 @@ public final class Coordinateur {
         micro.preparer()
         micro.surNiveau = { [weak self] db in self?.pastille.niveau(db) }
         transcripteur.surJournal = { journaliser($0) }
-        try transcripteur.demarrer()
+        transcripteur.surPreparation = { [weak self] preparation in
+            guard let self, machine.etat == .transcription else { return }
+            pastille.afficher(preparation ? .preparation : .transcription)
+        }
+        if configuration.toujoursPret { try transcripteur.demarrer() }
+        installerMenu()
+        nettoyerAudio()
+        nettoyage = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.nettoyerAudio()
+        }
 
         let d = Declencheur { [weak self] signal in
             guard let self else { return }
@@ -100,6 +121,7 @@ public final class Coordinateur {
                 appliquer(machine.recevoir(.relachement))
                 if bref { compterAppuiBref() }
             case .autreTouche:
+                if case .capture = machine.etat { journaliser("capture annulée : autre touche pendant ⌘ droite") }
                 appliquer(machine.recevoir(.autreTouche))
             }
         }
@@ -161,9 +183,12 @@ public final class Coordinateur {
 
     private func executer(_ action: Action) {
         switch action {
+        case .preparerModele:
+            transcripteur.preparer()
+
         case .demarrerCapture:
             pastille.repositionner()
-            do { try micro.demarrer() }
+            do { try micro.demarrer(); journaliser("capture micro démarrée") }
             catch {
                 journaliser("micro indisponible : \(error)")
                 injecter(.echec("micro indisponible"))
@@ -187,20 +212,40 @@ public final class Coordinateur {
             dureeMaxEnCours?.cancel(); dureeMaxEnCours = nil
 
         case .abandonnerCapture:
-            micro.arreter()
+            let abandonnes = micro.arreter()
+            journaliser("capture abandonnée : \(abandonnes.count) échantillons")
+            transcripteur.finCapture()
 
         case .cloturerCapture:
+            relachementDepuis = ProcessInfo.processInfo.systemUptime
             let echantillons = micro.arreter()
-            let parlees = AudioWAV.secondesParlees(echantillons)
-            if parlees >= MachineEtats.secondesParoleMinimum {
-                do { wavCourant = try micro.ecrireWAV(echantillons) }
-                catch {
-                    journaliser("écriture WAV impossible : \(error)")
-                    injecter(.echec("écriture WAV impossible"))
-                    return
+            let audios = self.audios
+            // Analyse et sérialisation hors de la file UI. La machine reste en
+            // transcription et refuse une seconde capture pendant cette étape.
+            fileAudio.async { [weak self] in
+                let parlees = AudioWAV.secondesParlees(echantillons)
+                let pic = echantillons.reduce(Float(0)) { max($0, abs($1)) }
+                let db = pic > 0 ? 20 * log10(pic) : -120
+                journaliser(String(format: "capture terminée : %d échantillons, %.3f s, pic %.1f dBFS, %.3f s au-dessus du seuil",
+                                   echantillons.count, Double(echantillons.count) / 16000, db, parlees))
+                do {
+                    let wav = parlees >= MachineEtats.secondesParoleMinimum
+                        ? try audios.ajouter(echantillons) : nil
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        wavCourant = wav
+                        if wav == nil { transcripteur.finCapture() }
+                        injecter(.captureAnalysee(secondesParlees: parlees))
+                    }
+                } catch {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        transcripteur.finCapture()
+                        journaliser("écriture WAV impossible : \(error)")
+                        injecter(.echec("écriture WAV impossible"))
+                    }
                 }
             }
-            injecter(.captureAnalysee(secondesParlees: parlees))
 
         case .envoyerAuWorker:
             guard let wav = wavCourant else {
@@ -208,25 +253,32 @@ public final class Coordinateur {
             }
             transcripteur.transcrire(wav) { [weak self] resultat in
                 guard let self else { return }
-                try? FileManager.default.removeItem(at: wav)
                 wavCourant = nil
                 switch resultat {
                 case .success(let r):
+                    do { try audios.supprimer(wav) }
+                    catch { journaliser("nettoyage audio impossible : \(error)") }
                     dernierDelai = r.secondes
-                    journaliser("📝 \(r.secondes)s : \(r.texte.prefix(90))")
+                    journaliser("transcription terminée : \(r.secondes) s, \(r.texte.count) caractères")
                     appliquer(machine.recevoir(.texteRecu(r.texte)))
                 case .failure(let e):
                     journaliser("⚠️ \(e)")
-                    if e == .workerMort { try? transcripteur.demarrer() }
-                    appliquer(machine.recevoir(.echec(message(e))))
+                    journaliser("audio conservé 24 h ; menu Dictée → Réessayer")
+                    appliquer(machine.recevoir(.echec(message(e) + " — menu Dictée pour réessayer")))
                 }
             }
+            transcripteur.finCapture()
 
         case .ouvrirHistorique:
             fenetreHistorique.ouvrir()
 
         case .coller(let texte):
             Collage.coller(texte)
+            if let debut = relachementDepuis {
+                journaliser(String(format: "latence relâchement → collage envoyé : %.3f s",
+                                   ProcessInfo.processInfo.systemUptime - debut))
+            }
+            relachementDepuis = nil
             // Perdre l'archive ne doit jamais faire perdre le texte : on colle
             // d'abord, on archive ensuite, et un échec d'écriture ne fait que
             // partir au journal.
@@ -238,6 +290,83 @@ public final class Coordinateur {
         }
     }
 
+    private func installerMenu() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Dictée")
+        item.button?.toolTip = "Dictée — réglages et dictées à réessayer"
+        let menu = NSMenu(); menu.delegate = self; menu.autoenablesItems = false
+        item.menu = menu; barre = item
+    }
+
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        @discardableResult func ajouter(_ titre: String, _ action: Selector? = nil) -> NSMenuItem {
+            let item = NSMenuItem(title: titre, action: action, keyEquivalent: "")
+            item.target = self; menu.addItem(item); return item
+        }
+        let statut = machine.etat == .transcription ? "Transcription en cours"
+            : (transcripteur.pret ? "Modèle prêt" : "Modèle en veille ou en préparation")
+        ajouter(statut).isEnabled = false
+        menu.addItem(.separator())
+        let mode = ajouter("Toujours garder le modèle prêt", #selector(changerMode))
+        mode.state = configuration.toujoursPret ? .on : .off
+        ajouter("Mode équilibré : veille après \(Int(configuration.inactiviteSecondes / 60)) min").isEnabled = false
+        menu.addItem(.separator())
+        let fichiers = audios.fichiers
+        let titre = fichiers.isEmpty ? "Aucune dictée à réessayer" : "Réessayer une dictée (\(fichiers.count))"
+        let parent = ajouter(titre)
+        parent.isEnabled = !fichiers.isEmpty && machine.etat == .repos
+        if !fichiers.isEmpty {
+            let sousMenu = NSMenu(); sousMenu.autoenablesItems = false
+            for wav in fichiers {
+                let date = audios.date(wav).formatted(date: .abbreviated, time: .standard)
+                let entree = NSMenuItem(title: date, action: #selector(reessayerAudio(_:)), keyEquivalent: "")
+                entree.target = self; entree.representedObject = wav
+                entree.isEnabled = machine.etat == .repos
+                sousMenu.addItem(entree)
+            }
+            parent.submenu = sousMenu
+        }
+        ajouter("Les audios en échec expirent après 24 h").isEnabled = false
+        ajouter("Ouvrir l’historique", #selector(ouvrirHistoriqueMenu))
+        ajouter("Ouvrir le vocabulaire", #selector(ouvrirVocabulaire))
+        ajouter("Ouvrir les réglages avancés", #selector(ouvrirConfiguration))
+    }
+
+    @objc private func changerMode() {
+        var config = configuration; config.toujoursPret.toggle()
+        do {
+            try config.enregistrer()
+            configuration = config
+            transcripteur.configurerVeille(config.toujoursPret ? 0 : config.inactiviteSecondes)
+            journaliser("mode : \(config.toujoursPret ? "toujours prêt" : "équilibré")")
+        } catch { journaliser("réglages non enregistrés : \(error)") }
+    }
+
+    @objc private func reessayerAudio(_ item: NSMenuItem) {
+        guard machine.etat == .repos, let wav = item.representedObject as? URL,
+              FileManager.default.fileExists(atPath: wav.path) else { return }
+        wavCourant = wav
+        relachementDepuis = ProcessInfo.processInfo.systemUptime
+        appliquer(machine.recevoir(.reessayer))
+    }
+
+    @objc private func ouvrirHistoriqueMenu() { fenetreHistorique.ouvrir() }
+    @objc private func ouvrirVocabulaire() {
+        NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/dictee/vocabulaire.txt"))
+    }
+    @objc private func ouvrirConfiguration() {
+        if !FileManager.default.fileExists(atPath: Configuration.chemin.path) {
+            try? configuration.enregistrer()
+        }
+        NSWorkspace.shared.open(Configuration.chemin)
+    }
+    private func nettoyerAudio() {
+        do { try audios.nettoyer(sauf: wavCourant) }
+        catch { journaliser("expiration audio impossible : \(error)") }
+    }
+
     private func planifier(_ delai: TimeInterval, _ bloc: @escaping () -> Void) -> DispatchWorkItem {
         let t = DispatchWorkItem(block: bloc)
         DispatchQueue.main.asyncAfter(deadline: .now() + delai, execute: t)
@@ -246,6 +375,7 @@ public final class Coordinateur {
 
     private func message(_ e: ErreurTranscription) -> String {
         switch e {
+        case .occupe:           return "transcription déjà en cours"
         case .workerMort:       return "transcripteur arrêté"
         case .delaiDepasse:     return "transcription trop longue"
         case .reponseIllisible: return "réponse illisible"

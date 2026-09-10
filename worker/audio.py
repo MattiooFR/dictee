@@ -28,3 +28,43 @@ def charger_wav(chemin):
             )
         brut = w.readframes(w.getnframes())
     return np.frombuffer(brut, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def preparer_parole(audio):
+    """VAD WebRTC, marges de 250 ms, ne retire que les longues pauses.
+
+    Mode 1 conservateur pour conserver les débuts/fins de mots. Les pauses
+    courtes restent intactes ; les blocs conservés ne sont jamais réordonnés.
+    """
+    import webrtcvad
+    audio = np.asarray(audio, dtype=np.float32)
+    taille = 320  # 20 ms à 16 kHz
+    vad = webrtcvad.Vad(1)
+    pcm = (np.clip(audio, -1, 1) * 32767).astype('<i2')
+    voix = []
+    for i in range(0, len(pcm), taille):
+        frame = pcm[i:i + taille]
+        if len(frame) < taille:
+            frame = np.pad(frame, (0, taille - len(frame)))
+        # Écarte le silence numérique, même dans le hangover du VAD.
+        parlee = vad.is_speech(frame.tobytes(), TAUX)
+        if parlee and np.max(np.abs(frame.astype(np.int32))) > 30:
+            voix.append(i)
+    stats = {'input_sec': round(len(audio) / TAUX, 3),
+             'speech_sec': round(len(voix) * 0.02, 3), 'kept_sec': 0.0}
+    if len(voix) < 10:  # au moins 200 ms détectées, en complément du garde Swift
+        return np.empty(0, dtype=np.float32), stats
+    marge = 4000
+    blocs = []
+    debut, fin = max(0, voix[0] - marge), min(len(audio), voix[0] + taille + marge)
+    for i in voix[1:]:
+        a, b = max(0, i - marge), min(len(audio), i + taille + marge)
+        if a - fin <= TAUX // 2:
+            fin = max(fin, b)
+        else:
+            blocs.append(audio[debut:fin])
+            debut, fin = a, b
+    blocs.append(audio[debut:fin])
+    garde = np.concatenate(blocs)
+    stats['kept_sec'] = round(len(garde) / TAUX, 3)
+    return garde, stats

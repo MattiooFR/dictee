@@ -6,8 +6,9 @@ import AVFoundation
 public final class Micro {
     private let moteur = AVAudioEngine()
     private let file = DispatchQueue(label: "dictee.micro")
-    private var echantillons: [Float] = []
+    private var tampon = TamponAudio()
     private var conv: Convertisseur?
+    private var erreursConversion = 0
 
     /// Appelé sur la file principale, ~46 fois par seconde pendant la capture.
     public var surNiveau: ((Float) -> Void)?
@@ -35,7 +36,7 @@ public final class Micro {
     }
 
     public func demarrer() throws {
-        file.sync { echantillons.removeAll(keepingCapacity: true) }
+        file.sync { _ = tampon.vider(); erreursConversion = 0 }
         let entree = moteur.inputNode
         let format = entree.inputFormat(forBus: 0)
         guard format.sampleRate > 0 else { throw ErreurAudio.conversionImpossible }
@@ -49,11 +50,15 @@ public final class Micro {
                 let db = AudioWAV.niveauDBFS(canaux[0], Int(buf.frameLength))
                 DispatchQueue.main.async { self.surNiveau?(db) }
             }
-            if let morceau = try? convertisseur.convertir(buf) {
-                self.file.async { self.echantillons.append(contentsOf: morceau) }
+            do {
+                let morceau = try convertisseur.convertir(buf)
+                self.file.async { self.tampon.ajouter(morceau) }
+            } catch {
+                self.file.async { self.erreursConversion += 1 }
             }
         }
         try moteur.start()
+        journaliser("micro : \(format.sampleRate) Hz, \(format.channelCount) canaux")
     }
 
     @discardableResult
@@ -61,7 +66,10 @@ public final class Micro {
         moteur.stop()
         moteur.inputNode.removeTap(onBus: 0)
         conv = nil
-        return file.sync { echantillons }
+        return file.sync {
+            if erreursConversion > 0 { journaliser("micro : \(erreursConversion) erreurs de conversion") }
+            return tampon.vider()
+        }
     }
 
     public func ecrireWAV(_ echantillons: [Float]) throws -> URL {
@@ -69,5 +77,16 @@ public final class Micro {
             .appendingPathComponent("dictee-\(UUID().uuidString.prefix(8)).wav")
         try AudioWAV.wav(echantillons).write(to: url)
         return url
+    }
+}
+
+/// Possession transférée à la clôture : le micro ne retient aucun ancien audio.
+struct TamponAudio {
+    private var echantillons: [Float] = []
+    mutating func ajouter(_ morceau: [Float]) { echantillons.append(contentsOf: morceau) }
+    mutating func vider() -> [Float] {
+        let resultat = echantillons
+        echantillons = []
+        return resultat
     }
 }

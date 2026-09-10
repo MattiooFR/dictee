@@ -1,19 +1,20 @@
 import Foundation
 
 public enum EtatPastille: Equatable {
-    case repos, ecoute, transcription, succes, annule
+    case repos, ecoute, preparation, transcription, succes, annule
     case erreur(String)
 }
 
 public enum Evenement: Equatable {
     case appui, gardeEcoulee, relachement, autreTouche, dureeMax
-    case clicPastille, tripleAppui
+    case clicPastille, tripleAppui, reessayer
     case captureAnalysee(secondesParlees: Double)
     case texteRecu(String)
     case echec(String)
 }
 
 public enum Action: Equatable {
+    case preparerModele
     case demarrerCapture, armerGarde, armerDureeMax, desarmerMinuteries
     case abandonnerCapture, cloturerCapture, envoyerAuWorker
     case coller(String)
@@ -42,7 +43,7 @@ public struct MachineEtats {
 
         case (.capture(gardeFranchie: false), .gardeEcoulee):
             etat = .capture(gardeFranchie: true)
-            return [.pastille(.ecoute)]
+            return [.preparerModele, .pastille(.ecoute)]
 
         case (.capture(gardeFranchie: false), .relachement):
             etat = .repos
@@ -64,7 +65,15 @@ public struct MachineEtats {
         // ── mode verrouillé : déclenché au clic, pas de touche à tenir ──
         case (.repos, .clicPastille):
             etat = .captureVerrouillee
-            return [.demarrerCapture, .armerDureeMax, .pastille(.ecoute)]
+            return [.demarrerCapture, .preparerModele, .armerDureeMax, .pastille(.ecoute)]
+
+        case (.repos, .reessayer):
+            etat = .transcription
+            return [.pastille(.preparation), .envoyerAuWorker]
+
+        case (.capture, .echec(let m)), (.captureVerrouillee, .echec(let m)):
+            etat = .repos
+            return [.desarmerMinuteries, .abandonnerCapture, .pastille(.erreur(m))]
 
         case (.repos, .tripleAppui):
             return [.ouvrirHistorique]

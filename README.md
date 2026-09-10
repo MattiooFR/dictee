@@ -25,9 +25,11 @@ machine.
 - **A pill at the right edge** shows what's happening: a wave of bars rides up
   it while you speak
 
-The Whisper model stays resident, so transcription is effectively free: a
-7-second clip comes back in **0.13 s** on an M5 Max, about 50× realtime. What
-you wait for is your own speech, not the model.
+The model wakes after a 250 ms Right ⌘ hold, while audio is already recording.
+Balanced mode clears the MLX cache after 60 seconds and stops the worker after
+15 idle minutes. The menu bar microphone offers an always-ready mode and retry
+for failed recordings. An orange pill means model preparation; black means
+transcription. Startup and inference have separate timeouts (120 s / 30 s).
 
 ## Requirements
 
@@ -36,8 +38,10 @@ you wait for is your own speech, not the model.
 - **macOS 14** or later
 - **Xcode** or the Command Line Tools (for `swift build`)
 - [**uv**](https://github.com/astral-sh/uv) — `brew install uv`
-- ~250 MB of RAM for the resident worker, ~1.5 GB of disk for the model weights
-  (downloaded once, into the shared Hugging Face cache)
+- About 1.5 GiB of model allocations plus working buffers while active; memory
+  depends on the recording. The default MLX cache budget is approximately 512 MiB.
+- ~1.5 GB of disk for model weights, downloaded at installation only if missing.
+  The runtime always uses the local Hugging Face cache in offline mode.
 
 ## Install
 
@@ -127,23 +131,19 @@ Click again, or press Right ⌘, to stop. In this mode typing does not cancel.
 | Esc | Closes the window |
 
 Everything is stored as JSON Lines in `~/.config/dictee/historique.jsonl`
-(~200 bytes per dictation). Only text is kept — audio is never stored, and the
-temporary WAV is deleted right after transcription.
+(~200 bytes per dictation). Successful audio is deleted. Failed/pending WAVs
+are stored privately in `~/.config/dictee/a-reessayer` for retry from the menu bar.
+They expire after 24 hours; cleanup runs at startup and every minute while the
+app runs, excluding the current job.
 
 ## Vocabulary
 
 Whisper mangles words it has never seen: *netlinking* becomes *net linking*,
 *Supabase* becomes *super base*. Seeding it with your own terms fixes this.
 
-Edit `~/.config/dictee/vocabulaire.txt`, one term per line, then restart:
-
-```bash
-launchctl kickstart -k gui/$UID/com.dugmedia.dictee
-```
-
-**Keep it under 60 terms.** Whisper caps `initial_prompt` at 224 tokens, and
-going over *degrades* transcription rather than improving it. The worker
-truncates and warns in the log. Twenty terms that matter beat sixty at random.
+Edit `~/.config/dictee/vocabulaire.txt`, one term per line. Changes apply to the
+next request without restarting. The worker keeps at most 60 complete terms
+and 223 actual Whisper tokens, including the prompt prefix, and logs truncation.
 
 ## Using another language
 
@@ -173,10 +173,11 @@ Making this configurable without editing code would be a welcome contribution.
                     └─ mlx-whisper large-v3-turbo, model resident in RAM
 ```
 
-Two processes, one lifetime. The LaunchAgent starts the app at login; the app
-starts the Python worker and keeps it alive, restarting it if it dies. The
-worker's contract is one WAV path per line on stdin, one JSON line back on
-stdout.
+The LaunchAgent starts the Swift app at login. The worker starts on demand and
+can stop independently after inactivity. Commands and responses are JSON lines
+with request IDs (`warmup`, `transcribe`, `purge`). Timed-out workers are stopped;
+stale responses cannot fulfill a later request. WebRTC VAD skips silence and
+trims long pauses with speech padding. Decoding uses at most two attempts.
 
 Three design decisions worth knowing about:
 
@@ -194,7 +195,7 @@ Three design decisions worth knowing about:
 
 ```bash
 swift build
-swift test                                                   # 41 tests
+swift test                                                   # Swift tests
 
 .venv/bin/python -m pytest worker/tests/test_filtres.py -q    # fast
 .venv/bin/python -m pytest worker/tests/test_audio.py -q      # fast
@@ -227,3 +228,22 @@ are in French.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Configuration and measurements
+
+`~/.config/dictee/config.json` supports `toujoursPret` (default false),
+`inactiviteSecondes` (900), `purgeSecondes` (60), and `cacheMo` (512).
+Always-ready mode changes live in the menu; restart to change numeric settings.
+The cache budget is soft and does not include active model allocations.
+
+Logs include startup, warmup, VAD, inference, attempt counts and MLX memory.
+Release-to-paste timing ends when the synthetic paste is posted, not when the
+other app has processed it. Dictated text is not written into these metrics.
+
+```bash
+.venv/bin/python -m pytest worker/tests -q -c worker/pytest.ini
+DICTEE_TEST_MODELE=1 swift test --filter vraiModeleLocal
+```
+
+`worker/requirements.lock` pins the Python environment. The installer syncs
+existing environments and reuses existing model weights.

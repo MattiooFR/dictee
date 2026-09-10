@@ -110,6 +110,16 @@ public final class Pastille {
 
     public func afficher(_ etat: EtatPastille, persistant: Bool = false) {
         etatCourant = etat
+        let description: String
+        switch etat {
+        case .preparation: description = "Préparation du modèle — votre voix est enregistrée"
+        case .transcription: description = "Transcription en cours"
+        case .ecoute: description = "Enregistrement en cours"
+        case .erreur(let message): description = message
+        default: description = "Dictée — cliquer pour enregistrer"
+        }
+        vue.toolTip = description
+        vue.setAccessibilityLabel(description)
         vue.afficher(etat, persistant: persistant)
     }
 
@@ -273,6 +283,12 @@ final class VuePastille: NSView {
             couleur(NSColor(white: 0.08, alpha: 0.92))
             glyphe.opacity = 0
             demarrerAnimation(.voix)
+
+        case .preparation:
+            surApparence?(.actif)
+            couleur(NSColor.systemOrange.withAlphaComponent(0.7))
+            glyphe.opacity = 0
+            demarrerAnimation(.attente)
 
         case .transcription:
             surApparence?(.actif)

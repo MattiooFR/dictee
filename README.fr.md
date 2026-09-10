@@ -6,7 +6,7 @@ Dictée vocale globale sur macOS, 100 % locale. Maintiens **⌘ droite**, parle,
 relâche : le texte s'insère là où est ton curseur, dans n'importe quelle
 application.
 
-Aucun appel réseau, aucun abonnement. La reconnaissance tourne sur le GPU de la
+Aucun appel réseau pendant la dictée, aucun abonnement. Le modèle est téléchargé une seule fois à l’installation, s’il manque au cache local. La reconnaissance tourne sur le GPU de la
 machine avec `mlx-whisper large-v3-turbo`, en français.
 
 ## Installation
@@ -64,6 +64,60 @@ Tant qu'il en manque une, la pastille reste rouge et l'app attend. **Rien à
 relancer** : elle teste toutes les 2 s et démarre d'elle-même dès que tu
 accordes. Le journal dit laquelle manque.
 
+## Mémoire et réactivité (0.3)
+
+Le mode **Équilibré** est actif par défaut. Le micro enregistre dès l’appui.
+Après 250 ms sur ⌘ droite, le moteur démarre ou se réchauffe pendant que tu
+parles. Un clic sur la pastille le réveille immédiatement. Un appui relâché ou transformé en raccourci avant 250 ms ne lance pas le modèle.
+
+Après une dictée, le cache MLX est purgé après 60 secondes au repos. Le
+modèle reste disponible jusqu’à 15 minutes d’inactivité, puis le worker
+s’arrête pour libérer sa mémoire. Il ne s’arrête jamais pendant une capture
+ou une transcription. Le menu micro de la barre macOS permet de choisir
+**Toujours garder le modèle prêt** (la purge du cache reste active).
+
+Le bandeau orange indique la préparation du modèle ; le bandeau noir indique
+la transcription. Le chargement a son propre délai maximal de 120 secondes,
+puis chaque transcription dispose de 30 secondes. Un timeout arrête le
+worker bloqué ; les identifiants empêchent les réponses tardives de se
+mélanger avec une autre dictée.
+
+Réglages avancés : `~/.config/dictee/config.json` (menu micro → ouvrir les réglages).
+Le mode se change immédiatement dans le menu. Les durées et le plafond sont
+lus au lancement de l’app :
+
+```json
+{
+  "toujoursPret": false,
+  "inactiviteSecondes": 900,
+  "purgeSecondes": 60,
+  "cacheMo": 512
+}
+```
+
+Le plafond de cache est souple ; les poids du modèle restent en plus en
+mémoire. Dans un essai local sur une phrase synthétique de 3,1 secondes,
+MLX gardait environ 1 543 Mio actifs et 515 Mio de cache, puis zéro cache
+après purge. Cela ne représente pas toute l’empreinte du processus et ne
+prédit pas la latence sur un Mac sous pression mémoire.
+
+WebRTC VAD repère la voix sans modèle supplémentaire. Les marges de 250 ms
+protègent les mots ; seules les longues pauses sont raccourcies. Whisper
+fait une première passe à température zéro, puis au maximum une seconde
+si la confiance est faible. Le vocabulaire est relu à chaque demande.
+
+## Réessayer une dictée
+
+Le menu micro → **Réessayer une dictée** liste les enregistrements en échec.
+Place ton curseur dans le champ cible, puis choisis l’enregistrement par sa
+date. Le texte est transcrit puis collé, sans refaire l’enregistrement.
+
+Les WAV restent dans `~/.config/dictee/a-reessayer`, dossier privé (0700,
+fichiers 0600). Ils sont supprimés après réussite. En cas d’échec ou de crash,
+ils restent disponibles pendant 24 heures. L’app nettoie les fichiers expirés
+au lancement puis toutes les minutes, sans supprimer un travail en cours.
+Si l’app est arrêtée, le nettoyage reprend à son prochain lancement.
+
 ## Utilisation
 
 Maintiens ⌘ droite, parle, relâche. La pastille au bord droit de l'écran
@@ -74,6 +128,7 @@ indique l'état :
 | Fine barre grise au ras du bord | Au repos |
 | Barre élargie et éclaircie | La souris la survole |
 | Bandeau noir, vague de barres qui monte | J'écoute |
+| Bandeau orange, ondulation lente | Je prépare le modèle |
 | Bandeau noir, ondulation lente | Je transcris |
 | Coche verte | Texte inséré |
 | Pulsation grise | Annulé (appui trop court, ou rien dit) |
@@ -87,18 +142,15 @@ reste un raccourci normal.
 `~/.config/dictee/vocabulaire.txt` — un terme par ligne. Sans lui,
 « netlinking » devient « net linking ».
 
-**Maximum 60 termes.** `initial_prompt` est plafonné à 224 tokens côté Whisper :
-au-delà, il *dégrade* la transcription au lieu de l'améliorer. Le worker tronque
-et prévient dans le journal.
-
-Relancer l'app après modification :
-`launchctl kickstart -k gui/$UID/com.dugmedia.dictee`
+**Maximum 60 termes et 223 tokens Whisper.** Le worker conserve des termes
+complets dans le budget réel du tokenizer. Il prévient dans le journal si
+le vocabulaire est tronqué. Les modifications sont prises en compte à la
+prochaine demande, sans relancer l’app.
 
 ## Historique
 
 Toutes les dictées sont conservées dans `~/.config/dictee/historique.jsonl`
-(une ligne JSON par dictée, ~200 octets). Seul le texte est gardé, jamais
-l'audio.
+(une ligne JSON par dictée, ~200 octets). Cet historique ne contient que le texte. Les audios à réessayer sont conservés séparément, au plus 24 heures pendant que l’app fonctionne.
 
 **Trois appuis brefs sur ⌘ droite** ouvrent la fenêtre de consultation.
 
@@ -135,10 +187,10 @@ Chaque module se vérifie seul, sans le reste de l'application.
 ## Tests
 
 ```bash
-swift test                                                    # 41 tests
-.venv/bin/python -m pytest worker/tests/test_filtres.py -q     # 9 tests
+swift test                                                    # tests Swift
+.venv/bin/python -m pytest worker/tests/test_filtres.py -q     # tests rapides
 .venv/bin/python -m pytest worker/tests/test_integration.py \
-  -q -m lent -c worker/pytest.ini                              # 2 tests (charge le modèle)
+  -q -m lent -c worker/pytest.ini                              # intégration avec le modèle local
 ```
 
 ## Checklist de vérification manuelle
@@ -148,15 +200,15 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
 
 - [ ] Les trois autorisations sont **toujours** accordées (si elles sautent,
       le certificat de signature a changé)
-- [ ] `swift test` : 41 tests au vert
-- [ ] `.venv/bin/python -m pytest worker/tests/test_filtres.py -q` : 9 au vert
+- [ ] `swift test` : tous les tests au vert
+- [ ] `.venv/bin/python -m pytest worker/tests/test_filtres.py -q` : tous au vert
 - [ ] Dictée nominale de 3 s dans TextEdit → texte inséré
 - [ ] Même chose dans Chrome, Slack et VS Code
 - [ ] ⌘ droite brève → pulsation grise, rien d'inséré
 - [ ] ⌘ droite + C → copie normale, aucune dictée
 - [ ] ⌘ **gauche** maintenue → aucune réaction
-- [ ] Silence de 3 s sous ⌘ droite → pulsation grise, aucune ligne worker
-      dans le journal
+- [ ] Silence de 3 s sous ⌘ droite → pulsation grise, aucune demande de
+      transcription (le réveil du moteur reste possible)
 - [ ] Pastille visible au-dessus d'une fenêtre en plein écran
 - [ ] Sur un second écran : la pastille se repositionne à la dictée suivante
 - [ ] Au repos, **aucun point orange** micro dans la barre de menus
@@ -184,7 +236,7 @@ le collage dans une vraie application. À dérouler après chaque `./build.sh`.
                 ├─ NSPasteboard + CGEvent  (le collage)
                 ├─ Historique JSONL        (~/.config/dictee)
                 └─▶ worker Python (enfant, stdin/stdout)
-                       └─ mlx-whisper large-v3-turbo, modèle résident
+                       └─ mlx-whisper large-v3-turbo, modèle à la demande
 ```
 
 Trois décisions qui expliquent le reste :
@@ -202,3 +254,20 @@ Trois décisions qui expliquent le reste :
 ## Licence
 
 MIT — voir [LICENSE](LICENSE).
+
+## Mesures et validation
+
+Le journal inclut les durées d’import, de préparation, de VAD, d’inférence,
+l’attente du worker, le nombre de passes et la mémoire active/cache/pic MLX.
+La latence relâchement → collage mesure l’envoi du raccourci, pas la réception
+par l’application cible. Le texte dicté n’est pas recopié dans ces métriques.
+
+```bash
+.venv/bin/python -m pytest worker/tests -q -c worker/pytest.ini
+DICTEE_TEST_MODELE=1 swift test --filter vraiModeleLocal
+```
+
+`worker/requirements.lock` fige toutes les versions Python. `install.sh`
+synchronise aussi les venv existants. Il réutilise le modèle présent dans le
+cache Hugging Face ; il ne télécharge que s’il manque. Pendant l’usage,
+le worker est forcé hors ligne et signale un cache absent/incomplet.

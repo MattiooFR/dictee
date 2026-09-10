@@ -18,7 +18,7 @@ func appuiTropCourt() {
 @Test("le cercle ne s'ouvre qu'après la garde")
 func gardeOuvreLeCercle() {
     var m = MachineEtats(); _ = m.recevoir(.appui)
-    #expect(m.recevoir(.gardeEcoulee) == [.pastille(.ecoute)])
+    #expect(m.recevoir(.gardeEcoulee) == [.preparerModele, .pastille(.ecoute)])
     #expect(m.etat == .capture(gardeFranchie: true))
 }
 
@@ -104,7 +104,7 @@ func ordreAffichageAvantCloture() {
 @Test("un clic sur la pastille démarre un enregistrement verrouillé")
 func clicDemarre() {
     var m = MachineEtats()
-    #expect(m.recevoir(.clicPastille) == [.demarrerCapture, .armerDureeMax, .pastille(.ecoute)])
+    #expect(m.recevoir(.clicPastille) == [.demarrerCapture, .preparerModele, .armerDureeMax, .pastille(.ecoute)])
     #expect(m.etat == .captureVerrouillee)
 }
 
@@ -169,4 +169,21 @@ func clicPendantPushToTalkIgnore() {
     var m = MachineEtats(); _ = m.recevoir(.appui); _ = m.recevoir(.gardeEcoulee)
     #expect(m.recevoir(.clicPastille) == [])
     #expect(m.etat == .capture(gardeFranchie: true))
+}
+
+@Test("réessayer depuis le repos envoie la dictée conservée sans réenregistrer")
+func reessayerSansCapture() {
+    var m = MachineEtats()
+    #expect(m.recevoir(.reessayer) == [.pastille(.preparation), .envoyerAuWorker])
+    #expect(m.etat == .transcription)
+    #expect(m.recevoir(.reessayer).isEmpty)
+}
+
+@Test("un micro en échec rend la main et désarme la capture")
+func echecMicroRendLaMain() {
+    var m = MachineEtats(); _ = m.recevoir(.appui)
+    let actions = m.recevoir(.echec("micro"))
+    #expect(m.etat == .repos)
+    #expect(actions.contains(.abandonnerCapture))
+    #expect(actions.contains(.desarmerMinuteries))
 }

@@ -57,7 +57,7 @@ def nettoyer(segments):
     return " ".join(gardes).strip()
 
 
-def vocabulaire(chemin, maximum_termes=MAXIMUM_TERMES):
+def vocabulaire(chemin, maximum_termes=MAXIMUM_TERMES, encoder=None):
     """Lit le fichier de vocabulaire. Rend (prompt, avertissement ou None).
 
     initial_prompt est plafonné à 224 tokens côté Whisper : au-delà, il dégrade
@@ -81,4 +81,12 @@ def vocabulaire(chemin, maximum_termes=MAXIMUM_TERMES):
 
     if not termes:
         return "", avertissement
-    return "Vocabulaire : " + ", ".join(termes) + ".", avertissement
+    prompt = "Vocabulaire : " + ", ".join(termes) + "."
+    if encoder is not None:
+        # Whisper ajoute un espace puis garde au plus n_text_ctx // 2 - 1.
+        # On conserve des termes complets, jamais des tokens coupés au milieu.
+        while termes and len(encoder(" " + prompt)) > 223:
+            termes.pop()
+            prompt = "Vocabulaire : " + ", ".join(termes) + "." if termes else ""
+            avertissement = "vocabulaire tronqué à 223 tokens Whisper"
+    return prompt, avertissement
