@@ -169,3 +169,14 @@ func vraisModelesSuccessifs() async throws {
         #expect(try await resultat(t, wav).get().texte.lowercased().contains("bonjour"))
     }
 }
+
+@Test("le délai de transcription grandit avec la durée de l'audio")
+func delaiSelonDuree() throws {
+    #expect(Transcripteur.delai(base: 30, audio: 0) == 30)
+    #expect(Transcripteur.delai(base: 30, audio: 106) == 83)
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("dictee-duree-\(UUID()).wav")
+    try AudioWAV.wav([Float](repeating: 0, count: 32_000)).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(AudioWAV.duree(url) == 2)
+    #expect(AudioWAV.duree(URL(fileURLWithPath: "/nexiste/pas.wav")) == 0)
+}

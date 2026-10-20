@@ -168,13 +168,18 @@ public final class Transcripteur {
         }
     }
 
+    /// Un long audio prend plus longtemps : 105 s de parole dépassaient 30 s fixes.
+    static func delai(base: TimeInterval, audio: TimeInterval) -> TimeInterval {
+        base + audio * 0.5
+    }
+
     private func envoyerSiPret() throws {
         guard disponible, chauffe == nil, let d = demande, !envoyee else { return }
         envoyee = true
         preparation(false)
         journal(String(format: "demande %@ : attente moteur %.3f s", d.id,
                        ProcessInfo.processInfo.systemUptime - d.debut))
-        armer(delai)
+        armer(Transcripteur.delai(base: delai, audio: AudioWAV.duree(d.wav)))
         try envoyer(["id": d.id, "cmd": "transcribe", "path": d.wav.path])
     }
 

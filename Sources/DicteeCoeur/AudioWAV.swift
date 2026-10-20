@@ -72,6 +72,12 @@ public enum AudioWAV {
         return d
     }
 
+    /// Durée d'un WAV écrit par `wav(_:)`, déduite de sa taille ; 0 si illisible.
+    public static func duree(_ url: URL) -> TimeInterval {
+        guard let taille = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, taille > 44 else { return 0 }
+        return Double(taille - 44) / Double(taux * 2)
+    }
+
     /// Niveau RMS d'une trame, en dBFS, plancher à -60.
     public static func niveauDBFS(_ p: UnsafePointer<Float>, _ n: Int) -> Float {
         guard n > 0 else { return -60 }
