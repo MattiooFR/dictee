@@ -97,13 +97,9 @@ public final class Micro {
     public func arreter() -> [Float] {
         moteur.stop()
         moteur.inputNode.removeTap(onBus: 0)
-        // Le traitement vocal est un mode du périphérique partagé : le garder
-        // entre deux appuis affaiblit le micro des autres apps (vocaux
-        // Messages, WhatsApp). On le rend dès la fin de la dictée.
-        if moteur.inputNode.isVoiceProcessingEnabled {
-            try? moteur.inputNode.setVoiceProcessingEnabled(false)
-            moteur = AVAudioEngine()
-        }
+        // Garder l'unité configurée entre deux appuis. La détruire ici
+        // reconfigure le périphérique partagé et peut arrêter le moteur
+        // d'une autre app. stop() suspend la capture et le traitement.
         conv = nil
         return file.sync {
             if erreursConversion > 0 { journaliser("micro : \(erreursConversion) erreurs de conversion") }
