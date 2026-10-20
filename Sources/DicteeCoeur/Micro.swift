@@ -4,11 +4,12 @@ import AVFoundation
 /// pendant une dictée : l'indicateur orange de macOS ne s'allume donc que
 /// quand on parle vraiment.
 public final class Micro {
-    private let moteur = AVAudioEngine()
+    private var moteur = AVAudioEngine()
     private let file = DispatchQueue(label: "dictee.micro")
     private var tampon = TamponAudio()
     private var conv: Convertisseur?
     private var erreursConversion = 0
+    private var niveauxCanaux: [Float] = []
 
     /// Appelé sur la file principale, ~46 fois par seconde pendant la capture.
     public var surNiveau: ((Float) -> Void)?
@@ -36,9 +37,27 @@ public final class Micro {
     }
 
     public func demarrer() throws {
-        file.sync { _ = tampon.vider(); erreursConversion = 0 }
-        let entree = moteur.inputNode
-        let format = entree.inputFormat(forBus: 0)
+        file.sync { _ = tampon.vider(); erreursConversion = 0; niveauxCanaux = [] }
+        var entree = moteur.inputNode
+        // Un appel peut exposer les capsules brutes du micro à un niveau
+        // beaucoup plus faible. Demander le signal vocal traité à macOS,
+        // avec son gain automatique, avant de choisir le format du tap.
+        if !entree.isVoiceProcessingEnabled && entree.inputFormat(forBus: 0).channelCount > 2 {
+            // prepare() a déjà initialisé l'unité matérielle. Le changement
+            // de type d'unité nécessite un moteur neuf (-10849 sinon).
+            moteur = AVAudioEngine()
+            entree = moteur.inputNode
+            do {
+                try entree.setVoiceProcessingEnabled(true)
+                entree.isVoiceProcessingAGCEnabled = true
+                entree.voiceProcessingOtherAudioDuckingConfiguration = .init(
+                    enableAdvancedDucking: false, duckingLevel: .min)
+            } catch {
+                moteur = AVAudioEngine()
+                throw error
+            }
+        }
+        let format = entree.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { throw ErreurAudio.conversionImpossible }
 
         let convertisseur = try Convertisseur(depuis: format)
@@ -47,8 +66,15 @@ public final class Micro {
         entree.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buf, _ in
             guard let self else { return }
             if let canaux = buf.floatChannelData {
-                let db = AudioWAV.niveauDBFS(canaux[0], Int(buf.frameLength))
+                let niveaux = (0..<Int(buf.format.channelCount)).map {
+                    AudioWAV.niveauDBFS(canaux[$0], Int(buf.frameLength))
+                }
+                let db = niveaux.first ?? -60
                 DispatchQueue.main.async { self.surNiveau?(db) }
+                self.file.async {
+                    if self.niveauxCanaux.count != niveaux.count { self.niveauxCanaux = niveaux }
+                    else { self.niveauxCanaux = zip(self.niveauxCanaux, niveaux).map { max($0, $1) } }
+                }
             }
             do {
                 let morceau = try convertisseur.convertir(buf)
@@ -57,17 +83,31 @@ public final class Micro {
                 self.file.async { self.erreursConversion += 1 }
             }
         }
-        try moteur.start()
-        journaliser("micro : \(format.sampleRate) Hz, \(format.channelCount) canaux")
+        do { try moteur.start() }
+        catch {
+            entree.removeTap(onBus: 0)
+            conv = nil
+            moteur = AVAudioEngine()
+            throw error
+        }
+        journaliser("micro : \(format.sampleRate) Hz, \(format.channelCount) canaux, traitement vocal : \(entree.isVoiceProcessingEnabled)")
     }
 
     @discardableResult
     public func arreter() -> [Float] {
         moteur.stop()
         moteur.inputNode.removeTap(onBus: 0)
+        // Le traitement vocal est un mode du périphérique partagé : le garder
+        // entre deux appuis affaiblit le micro des autres apps (vocaux
+        // Messages, WhatsApp). On le rend dès la fin de la dictée.
+        if moteur.inputNode.isVoiceProcessingEnabled {
+            try? moteur.inputNode.setVoiceProcessingEnabled(false)
+            moteur = AVAudioEngine()
+        }
         conv = nil
         return file.sync {
             if erreursConversion > 0 { journaliser("micro : \(erreursConversion) erreurs de conversion") }
+            journaliser("micro : niveaux RMS max par canal (dBFS) : \(niveauxCanaux.map { String(format: "%.1f", $0) }.joined(separator: ", "))")
             return tampon.vider()
         }
     }
