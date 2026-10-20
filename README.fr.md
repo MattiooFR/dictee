@@ -78,7 +78,8 @@ ou une transcription. Le menu micro de la barre macOS permet de choisir
 
 Le bandeau orange indique la préparation du modèle ; le bandeau noir indique
 la transcription. Le chargement a son propre délai maximal de 120 secondes,
-puis chaque transcription dispose de 30 secondes. Un timeout arrête le
+puis chaque transcription dispose de 30 secondes plus 0,5 seconde par seconde
+d’audio (83 s pour une dictée de 1 min 46). Un timeout arrête le
 worker bloqué ; les identifiants empêchent les réponses tardives de se
 mélanger avec une autre dictée.
 
@@ -150,7 +151,7 @@ prochaine demande, sans relancer l’app.
 ## Historique
 
 Toutes les dictées sont conservées dans `~/.config/dictee/historique.jsonl`
-(une ligne JSON par dictée, ~200 octets). Cet historique ne contient que le texte. Les audios à réessayer sont conservés séparément, au plus 24 heures pendant que l’app fonctionne.
+(une ligne JSON par dictée, ~200 octets). L’audio de chaque dictée réussie est gardé 7 jours dans `~/.config/dictee/audios/`, sous l’identifiant de la dictée, pour le réécouter ou l’envoyer tel quel. Les audios à réessayer sont conservés séparément, au plus 24 heures pendant que l’app fonctionne.
 
 **Trois appuis brefs sur ⌘ droite** ouvrent la fenêtre de consultation.
 
@@ -158,6 +159,9 @@ Toutes les dictées sont conservées dans `~/.config/dictee/historique.jsonl`
 |---|---|
 | Champ de recherche | Filtre à la frappe, insensible à la casse et aux accents |
 | Clic sur une ligne | Le texte part dans le presse-papier |
+| ▶ | Réécoute l’audio de la dictée |
+| Bouton onde | L’audio part dans le presse-papier : ⌘V dans WhatsApp, Slack ou Mail l’envoie en fichier |
+| Glisser une ligne | Dépose le fichier audio dans l’app visée |
 | ⏎ | Le texte est recollé dans l'application d'où tu venais |
 | ⌫ | L'entrée est supprimée |
 | Échap | La fenêtre se ferme |

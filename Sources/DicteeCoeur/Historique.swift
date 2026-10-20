@@ -45,14 +45,19 @@ public final class Historique {
     }
 
     @discardableResult
-    public func ajouter(texte: String, secondes: Double, date: Date = Date()) throws -> Dictee {
-        let d = Dictee(id: String(UUID().uuidString.prefix(8)).lowercased(),
-                       date: date, texte: texte, secondes: secondes)
+    public func ajouter(texte: String, secondes: Double, date: Date = Date(),
+                        id: String = Historique.nouvelIdentifiant()) throws -> Dictee {
+        let d = Dictee(id: id, date: date, texte: texte, secondes: secondes)
         var ligne = try Historique.encodeur().encode(d)
         ligne.append(0x0A)
         try ajouterAuFichier(ligne)
         entrees.insert(d, at: 0)
         return d
+    }
+
+    /// Choisi avant l'archivage pour que l'audio porte déjà le nom de sa dictée.
+    public static func nouvelIdentifiant() -> String {
+        String(UUID().uuidString.prefix(8)).lowercased()
     }
 
     public func supprimer(id: String) throws {

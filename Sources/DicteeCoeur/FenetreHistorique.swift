@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 
 /// Table qui remonte ⏎, ⌫ et Échap au lieu de les laisser au comportement
 /// par défaut.
@@ -21,11 +22,21 @@ final class TableHistorique: NSTableView {
     }
 }
 
+/// Bouton de ligne : retient la dictée qu'il concerne, la ligne pouvant être
+/// recyclée ou décalée par la recherche.
+final class BoutonLigne: NSButton {
+    var idDictee = ""
+}
+
 /// Fenêtre de consultation des dictées. Ne colle rien elle-même : elle délègue
 /// via `surRecoller`, pour rester ignorante du mécanisme de collage.
 public final class FenetreHistorique: NSObject, NSTableViewDataSource,
-                                      NSTableViewDelegate, NSSearchFieldDelegate {
+                                      NSTableViewDelegate, NSSearchFieldDelegate,
+                                      AVAudioPlayerDelegate {
     private let historique: Historique
+    private let archive: ArchiveAudio
+    private var lecture: AVAudioPlayer?
+    private var idEnLecture: String?
     private var fenetre: NSWindow?
     private var table = TableHistorique()
     private var recherche = NSSearchField()
@@ -36,8 +47,9 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
 
     public var surRecoller: ((String, NSRunningApplication?) -> Void)?
 
-    public init(historique: Historique) {
+    public init(historique: Historique, archive: ArchiveAudio) {
         self.historique = historique
+        self.archive = archive
         super.init()
     }
 
@@ -61,6 +73,8 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
         f.title = "Dictée — historique"
         f.center()
         f.isReleasedWhenClosed = false
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: f,
+                                               queue: .main) { [weak self] _ in self?.arreterLecture() }
 
         recherche.placeholderString = "rechercher…"
         recherche.delegate = self
@@ -76,6 +90,7 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
         table.target = self
         table.action = #selector(clicLigne)
         table.style = .inset
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
         table.surEntree = { [weak self] i in
             guard let self, i < affichees.count else { return }
@@ -85,7 +100,10 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
         }
         table.surSuppression = { [weak self] i in
             guard let self, i < affichees.count else { return }
-            try? historique.supprimer(id: affichees[i].id)
+            let id = affichees[i].id
+            if idEnLecture == id { arreterLecture() }
+            try? historique.supprimer(id: id)
+            try? archive.supprimer(id)
             rafraichir()
         }
         table.surEchappement = { [weak self] in self?.fenetre?.orderOut(nil) }
@@ -141,10 +159,45 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
             heure.centerYAnchor.constraint(equalTo: cellule.centerYAnchor),
             heure.widthAnchor.constraint(equalToConstant: 92),
             texte.leadingAnchor.constraint(equalTo: heure.trailingAnchor, constant: 8),
-            texte.trailingAnchor.constraint(equalTo: cellule.trailingAnchor, constant: -8),
             texte.centerYAnchor.constraint(equalTo: cellule.centerYAnchor),
         ])
+
+        guard archive.fichier(d.id) != nil else {
+            texte.trailingAnchor.constraint(equalTo: cellule.trailingAnchor, constant: -8).isActive = true
+            return cellule
+        }
+        let ecouter = bouton(idEnLecture == d.id ? "stop.fill" : "play.fill",
+                             idEnLecture == d.id ? "Arrêter" : "Écouter l’audio", d.id, #selector(basculerLecture(_:)))
+        let copier = bouton("waveform", "Copier l’audio (⌘V pour l’envoyer, ou glisser la ligne)",
+                            d.id, #selector(copierAudio(_:)))
+        let boutons = NSStackView(views: [ecouter, copier])
+        boutons.spacing = 2
+        boutons.translatesAutoresizingMaskIntoConstraints = false
+        cellule.addSubview(boutons)
+        NSLayoutConstraint.activate([
+            boutons.trailingAnchor.constraint(equalTo: cellule.trailingAnchor, constant: -6),
+            boutons.centerYAnchor.constraint(equalTo: cellule.centerYAnchor),
+            texte.trailingAnchor.constraint(equalTo: boutons.leadingAnchor, constant: -8),
+        ])
         return cellule
+    }
+
+    private func bouton(_ symbole: String, _ aide: String, _ id: String, _ action: Selector) -> BoutonLigne {
+        let b = BoutonLigne()
+        b.image = NSImage(systemSymbolName: symbole, accessibilityDescription: aide)
+        b.bezelStyle = .accessoryBarAction
+        b.isBordered = false
+        b.toolTip = aide
+        b.idDictee = id
+        b.target = self
+        b.action = action
+        return b
+    }
+
+    /// Glisser une ligne qui a un audio dépose ce fichier (WhatsApp, Mail, Finder…).
+    public func tableView(_ t: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row < affichees.count, let u = copieAEnvoyer(affichees[row]) else { return nil }
+        return u as NSURL
     }
 
     /// Heure seule pour aujourd'hui, date courte au-delà.
@@ -165,6 +218,62 @@ public final class FenetreHistorique: NSObject, NSTableViewDataSource,
         guard table.clickedRow >= 0, table.clickedRow < affichees.count else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(affichees[table.clickedRow].texte, forType: .string)
+    }
+
+    @objc private func copierAudio(_ b: BoutonLigne) {
+        guard let d = affichees.first(where: { $0.id == b.idDictee }), let u = copieAEnvoyer(d) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([u as NSURL])
+        b.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Audio copié")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            b.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Copier l’audio")
+        }
+    }
+
+    /// Copie temporaire au nom lisible : le destinataire voit « Dictée 20 oct 20h17.wav »,
+    /// pas l'identifiant interne. L'archive, elle, reste privée.
+    private func copieAEnvoyer(_ d: Dictee) -> URL? {
+        guard let source = archive.fichier(d.id) else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "fr_FR")
+        f.dateFormat = "d MMM HH'h'mm"
+        let dossier = FileManager.default.temporaryDirectory.appendingPathComponent("dictee-envoi-\(d.id)")
+        let cible = dossier.appendingPathComponent("Dictée \(f.string(from: d.date)).wav")
+        do {
+            try FileManager.default.createDirectory(at: dossier, withIntermediateDirectories: true)
+            if FileManager.default.fileExists(atPath: cible.path) { try FileManager.default.removeItem(at: cible) }
+            try FileManager.default.copyItem(at: source, to: cible)
+            return cible
+        } catch {
+            journaliser("copie audio impossible : \(error)")
+            return nil
+        }
+    }
+
+    @objc private func basculerLecture(_ b: BoutonLigne) {
+        if idEnLecture == b.idDictee { arreterLecture(); return }
+        arreterLecture()
+        guard let u = archive.fichier(b.idDictee), let p = try? AVAudioPlayer(contentsOf: u) else { return }
+        p.delegate = self
+        p.play()
+        lecture = p
+        idEnLecture = b.idDictee
+        table.reloadData()
+    }
+
+    private func arreterLecture() {
+        lecture?.stop()
+        lecture = nil
+        guard idEnLecture != nil else { return }
+        idEnLecture = nil
+        table.reloadData()
+    }
+
+    public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, lecture === player else { return }
+            arreterLecture()
+        }
     }
 
     public func controlTextDidChange(_ obj: Notification) { rafraichir() }

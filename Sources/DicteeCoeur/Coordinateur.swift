@@ -25,6 +25,10 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
     private var dernierDelai: Double = 0
     private var configuration: Configuration
     private let audios = AudioEnAttente()
+    private let archive = ArchiveAudio()
+    /// Identifiant réservé à la dictée qui vient d'être transcrite : son audio
+    /// est déjà rangé sous ce nom, l'entrée d'historique le reprendra au collage.
+    private var idDicteeCourante: String?
     private let fileAudio = DispatchQueue(label: "dictee.audio.fichiers", qos: .userInitiated)
     private var barre: NSStatusItem?
     private var nettoyage: Timer?
@@ -33,7 +37,7 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
 
     private let historique: Historique
     private lazy var fenetreHistorique: FenetreHistorique = {
-        let f = FenetreHistorique(historique: historique)
+        let f = FenetreHistorique(historique: historique, archive: archive)
         f.surRecoller = { texte, app in
             Reactivation.collerDans(app, texte: texte, surJournal: { journaliser($0) })
         }
@@ -260,8 +264,13 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
                 wavCourant = nil
                 switch resultat {
                 case .success(let r):
-                    do { try audios.supprimer(wav) }
-                    catch { journaliser("nettoyage audio impossible : \(error)") }
+                    let id = Historique.nouvelIdentifiant()
+                    do { try archive.ranger(wav, id: id); idDicteeCourante = id }
+                    catch {
+                        journaliser("archivage audio impossible : \(error)")
+                        do { try audios.supprimer(wav) }
+                        catch { journaliser("nettoyage audio impossible : \(error)") }
+                    }
                     dernierDelai = r.secondes
                     journaliser("transcription terminée : \(r.secondes) s, \(r.texte.count) caractères")
                     appliquer(machine.recevoir(.texteRecu(r.texte)))
@@ -286,7 +295,9 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
             // Perdre l'archive ne doit jamais faire perdre le texte : on colle
             // d'abord, on archive ensuite, et un échec d'écriture ne fait que
             // partir au journal.
-            do { try historique.ajouter(texte: texte, secondes: dernierDelai) }
+            let id = idDicteeCourante ?? Historique.nouvelIdentifiant()
+            idDicteeCourante = nil
+            do { try historique.ajouter(texte: texte, secondes: dernierDelai, id: id) }
             catch { journaliser("historique non écrit : \(error)") }
 
         case .pastille(let etat):
@@ -356,6 +367,7 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
             parent.submenu = sousMenu
         }
         ajouter("Les audios en échec expirent après 24 h").isEnabled = false
+        ajouter("Les audios de l’historique sont gardés 7 jours").isEnabled = false
         ajouter("Ouvrir l’historique", #selector(ouvrirHistoriqueMenu))
         ajouter("Ouvrir le vocabulaire", #selector(ouvrirVocabulaire))
         ajouter("Ouvrir les réglages avancés", #selector(ouvrirConfiguration))
@@ -433,6 +445,8 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
     private func nettoyerAudio() {
         do { try audios.nettoyer(sauf: wavCourant) }
         catch { journaliser("expiration audio impossible : \(error)") }
+        do { try archive.nettoyer() }
+        catch { journaliser("expiration archive audio impossible : \(error)") }
     }
 
     private func planifier(_ delai: TimeInterval, _ bloc: @escaping () -> Void) -> DispatchWorkItem {

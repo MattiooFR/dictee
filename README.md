@@ -29,7 +29,8 @@ The model wakes after a 250 ms Right ⌘ hold, while audio is already recording.
 Balanced mode clears the MLX cache after 60 seconds and stops the worker after
 15 idle minutes. The menu bar microphone offers an always-ready mode and retry
 for failed recordings. An orange pill means model preparation; black means
-transcription. Startup and inference have separate timeouts (120 s / 30 s).
+transcription. Startup and inference have separate timeouts (120 s / 30 s plus 0.5 s per
+second of audio).
 
 ## Requirements
 
@@ -126,12 +127,17 @@ Click again, or press Right ⌘, to stop. In this mode typing does not cancel.
 |---|---|
 | Search field | Filters as you type, ignoring case and accents |
 | Click a row | Copies the text |
+| ▶ | Plays the dictation's audio |
+| Waveform button | Copies the audio file: ⌘V in WhatsApp, Slack or Mail sends it |
+| Drag a row | Drops the audio file into another app |
 | ⏎ | Pastes it back into the app you came from |
 | ⌫ | Deletes the entry |
 | Esc | Closes the window |
 
 Everything is stored as JSON Lines in `~/.config/dictee/historique.jsonl`
-(~200 bytes per dictation). Successful audio is deleted. Failed/pending WAVs
+(~200 bytes per dictation). Audio of successful dictations is kept for 7 days in
+`~/.config/dictee/audios/`, named after the dictation, so you can replay it or
+send it as is. Failed/pending WAVs
 are stored privately in `~/.config/dictee/a-reessayer` for retry from the menu bar.
 They expire after 24 hours; cleanup runs at startup and every minute while the
 app runs, excluding the current job.

@@ -105,3 +105,13 @@ func rechercheVide() throws {
     #expect(h.rechercher("").count == 2)
     #expect(h.rechercher("   ").count == 2)
 }
+
+@Test("une dictée peut recevoir un identifiant choisi d'avance")
+func identifiantImpose() throws {
+    let f = dossierTemporaire().appendingPathComponent("h.jsonl")
+    let h = Historique(fichier: f)
+    let id = Historique.nouvelIdentifiant()
+    #expect(try h.ajouter(texte: "avec audio", secondes: 1, id: id).id == id)
+    let relu = Historique(fichier: f); relu.charger()
+    #expect(relu.entrees[0].id == id)
+}
