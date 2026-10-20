@@ -10,6 +10,9 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
     public static let fenetreTripleAppui: TimeInterval = 0.9
     public static let appuisPourHistorique = 3
 
+    private var modeComparaison = false
+    private let fenetreComparaison = FenetreComparaison()
+    private lazy var comparateur = Comparateur(transcripteur: transcripteur)
     private var machine = MachineEtats()
     private let micro = Micro()
     private let pastille = Pastille()
@@ -45,7 +48,7 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
             arguments: [racine.appendingPathComponent("worker/transcribe.py").path],
             delai: Coordinateur.delaiWorker,
             inactivite: config.toujoursPret ? 0 : config.inactiviteSecondes,
-            purgeApres: config.purgeSecondes, cacheMo: config.cacheMo)
+            purgeApres: config.purgeSecondes, cacheMo: config.cacheMo, modele: config.modele)
         historique = Historique(fichier: FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/dictee/historique.jsonl"))
         super.init()
@@ -184,7 +187,7 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
     private func executer(_ action: Action) {
         switch action {
         case .preparerModele:
-            transcripteur.preparer()
+            if !modeComparaison { transcripteur.preparer() }
 
         case .demarrerCapture:
             pastille.repositionner()
@@ -251,6 +254,7 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
             guard let wav = wavCourant else {
                 injecter(.echec("aucun audio à transcrire")); return
             }
+            if modeComparaison { comparerAudio(wav); return }
             transcripteur.transcrire(wav) { [weak self] resultat in
                 guard let self else { return }
                 wavCourant = nil
@@ -307,9 +311,33 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
         let statut = machine.etat == .transcription ? "Transcription en cours"
             : (transcripteur.pret ? "Modèle prêt" : "Modèle en veille ou en préparation")
         ajouter(statut).isEnabled = false
+        let modeles = ajouter("Modèle local : \(configuration.modele.titre)")
+        let choix = NSMenu(); choix.autoenablesItems = false
+        for modele in ModeleLocal.allCases {
+            let entree = NSMenuItem(title: modele.titre, action: #selector(changerModele(_:)), keyEquivalent: "")
+            entree.target = self; entree.representedObject = modele.rawValue
+            entree.state = configuration.modele == modele ? .on : .off
+            entree.isEnabled = machine.etat == .repos
+            choix.addItem(entree)
+        }
+        modeles.submenu = choix
+        modeles.isEnabled = machine.etat == .repos
+        if configuration.modele != .whisper {
+            ajouter("Vocabulaire personnalisé : disponible avec Whisper").isEnabled = false
+        }
+        menu.addItem(.separator())
+        let comparaison = ajouter("Mode comparaison (3 modèles)", #selector(changerComparaison))
+        comparaison.state = modeComparaison ? .on : .off
+        comparaison.isEnabled = machine.etat == .repos
+        if modeComparaison {
+            ajouter("Dicte une fois pour comparer les trois textes").isEnabled = false
+        }
+        let derniers = ajouter("Voir la dernière comparaison", #selector(ouvrirComparaison))
+        derniers.isEnabled = fenetreComparaison.disponible
         menu.addItem(.separator())
         let mode = ajouter("Toujours garder le modèle prêt", #selector(changerMode))
         mode.state = configuration.toujoursPret ? .on : .off
+        mode.isEnabled = machine.etat == .repos
         ajouter("Mode équilibré : veille après \(Int(configuration.inactiviteSecondes / 60)) min").isEnabled = false
         menu.addItem(.separator())
         let fichiers = audios.fichiers
@@ -331,6 +359,46 @@ public final class Coordinateur: NSObject, NSMenuDelegate {
         ajouter("Ouvrir l’historique", #selector(ouvrirHistoriqueMenu))
         ajouter("Ouvrir le vocabulaire", #selector(ouvrirVocabulaire))
         ajouter("Ouvrir les réglages avancés", #selector(ouvrirConfiguration))
+    }
+
+    @objc private func changerComparaison() {
+        guard machine.etat == .repos else { return }
+        modeComparaison.toggle()
+        journaliser("mode comparaison : \(modeComparaison ? "activé" : "désactivé")")
+    }
+
+    @objc private func ouvrirComparaison() { fenetreComparaison.ouvrir() }
+
+    private func comparerAudio(_ wav: URL) {
+        fenetreComparaison.commencer()
+        comparateur.comparer(wav, restaurer: configuration.modele, progression: { [weak self] modele in
+            self?.fenetreComparaison.progression(modele)
+        }) { [weak self] resultats in
+            guard let self else { return }
+            wavCourant = nil
+            relachementDepuis = nil
+            fenetreComparaison.afficher(resultats)
+            if resultats.contains(where: { $0.reponse != nil }) {
+                do { try audios.supprimer(wav) }
+                catch { journaliser("nettoyage audio impossible : \(error)") }
+                appliquer(machine.recevoir(.comparaisonTerminee))
+            } else {
+                appliquer(machine.recevoir(.echec("comparaison impossible — audio conservé pour réessayer")))
+            }
+        }
+    }
+
+    @objc private func changerModele(_ item: NSMenuItem) {
+        guard machine.etat == .repos, let valeur = item.representedObject as? String,
+              let modele = ModeleLocal(rawValue: valeur), modele != configuration.modele else { return }
+        var config = configuration; config.modele = modele
+        do {
+            try transcripteur.changerModele(modele) { try config.enregistrer() }
+            configuration = config
+        } catch {
+            journaliser("changement de modèle impossible : \(error)")
+            pastille.afficher(.erreur("changement de modèle impossible"))
+        }
     }
 
     @objc private func changerMode() {

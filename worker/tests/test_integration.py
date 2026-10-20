@@ -22,10 +22,10 @@ def lire(worker, timeout=60):
     return json.loads(ligne)
 
 
-@pytest.fixture(scope='module')
-def worker():
+@pytest.fixture(scope='module', params=['whisper', 'parakeet', 'cohere'])
+def worker(request):
     p = subprocess.Popen([sys.executable, str(RACINE / 'transcribe.py')], cwd=RACINE,
-                         env={**os.environ, 'HF_HUB_OFFLINE': '1'},
+                         env={**os.environ, 'HF_HUB_OFFLINE': '1', 'DICTEE_MODEL': request.param},
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
     p.reponses = queue.Queue()
     def drainer():

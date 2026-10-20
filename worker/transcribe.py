@@ -19,16 +19,10 @@ signal.signal(signal.SIGTERM, terminer)
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 import mlx.core as mx
-import mlx_whisper
 import numpy as np
-from mlx_whisper.tokenizer import get_tokenizer
 
 from audio import charger_wav, preparer_parole
-from filtres import nettoyer, vocabulaire
-from moteur import modele_local, transcrire_limite
-
-LANGUE = 'fr'
-VOCABULAIRE = os.path.expanduser('~/.config/dictee/vocabulaire.txt')
+from backend import Backend
 
 
 def repondre(obj):
@@ -42,33 +36,20 @@ def memoire():
         ('peak_mib', mx.get_peak_memory))}
 
 
-def prompt_actuel():
-    prompt, avertissement = vocabulaire(VOCABULAIRE, encoder=tokenizer.encode)
-    if avertissement:
-        print(avertissement, file=sys.stderr, flush=True)
-    return prompt
-
-
-def options():
-    return dict(path_or_hf_repo=model, language=LANGUE, initial_prompt=prompt_actuel() or None,
-                condition_on_previous_text=False, verbose=None)
-
-
 def chauffer():
     debut = time.perf_counter()
-    mlx_whisper.transcribe(np.zeros(16000, dtype=np.float32), **options(), temperature=0.0)
+    backend.transcrire(np.zeros(16000, dtype=np.float32))
     return round(time.perf_counter() - debut, 3)
 
 
 def main():
-    global model, tokenizer
+    global backend
     try:
         imports_sec = time.perf_counter() - DEBUT
-        model = modele_local()
-        tokenizer = get_tokenizer(True, num_languages=100, language=LANGUE, task='transcribe')
+        backend = Backend(os.environ.get('DICTEE_MODEL', 'whisper'))
         mx.set_cache_limit(int(os.environ.get('DICTEE_CACHE_MB', '512')) * 2**20)
         warmup_sec = chauffer()
-        repondre({'ready': True, 'metrics': {'imports_sec': round(imports_sec, 3),
+        repondre({'ready': True, 'metrics': {'model': backend.modele, 'imports_sec': round(imports_sec, 3),
                   'warmup_sec': warmup_sec, 'startup_sec': round(time.perf_counter()-DEBUT, 3),
                   **memoire()}})
     except Exception as e:
@@ -96,14 +77,12 @@ def main():
                 texte, tentatives, inference_sec = '', 0, 0.0
                 if len(audio):
                     t = time.perf_counter()
-                    resultat, tentatives = transcrire_limite(mlx_whisper.transcribe, audio, options())
+                    texte, tentatives = backend.transcrire(audio)
                     inference_sec = time.perf_counter() - t
-                    texte = nettoyer(s['text'] for s in resultat['segments'])
-                    del resultat
                 del audio
                 repondre({'id': identifiant, 'text': texte,
                           'sec': round(time.perf_counter() - debut, 3),
-                          'metrics': {**stats, 'preparation_sec': round(preparation_sec, 3),
+                          'metrics': {'model': backend.modele, **stats, 'preparation_sec': round(preparation_sec, 3),
                                       'inference_sec': round(inference_sec, 3),
                                       'attempts': tentatives, **memoire()}})
             else:

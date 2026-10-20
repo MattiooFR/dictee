@@ -9,6 +9,7 @@ public enum Evenement: Equatable {
     case appui, gardeEcoulee, relachement, autreTouche, dureeMax
     case clicPastille, tripleAppui, reessayer
     case captureAnalysee(secondesParlees: Double)
+    case comparaisonTerminee
     case texteRecu(String)
     case echec(String)
 }
@@ -90,6 +91,10 @@ public struct MachineEtats {
             // Whisper hallucine sur le silence : ne pas l'appeler est la seule parade.
             if sec < Self.secondesParoleMinimum { etat = .repos; return [.pastille(.annule)] }
             return [.envoyerAuWorker]
+
+        case (.transcription, .comparaisonTerminee):
+            etat = .repos
+            return [.pastille(.succes)]
 
         case (.transcription, .texteRecu(let t)):
             etat = .repos

@@ -15,7 +15,7 @@ if [ ! -x .venv/bin/python ]; then
 fi
 # Vérifie aussi les dépendances lors d'une mise à jour d'un venv existant.
 uv pip sync --python .venv/bin/python worker/requirements.lock
-.venv/bin/python worker/installer_modele.py
+.venv/bin/python worker/installer_modele.py "$@"
 
 mkdir -p "$CONFIG"
 if [ ! -f "$CONFIG/vocabulaire.txt" ]; then

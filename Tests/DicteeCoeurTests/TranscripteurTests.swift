@@ -124,3 +124,48 @@ func vraiModeleLocal() async throws {
     #expect(b.texte.lowercased().contains("bonjour"))
     t.finCapture()
 }
+
+@Test("changer de moteur redémarre le processus avec le nouveau choix")
+func changementModele() async throws {
+    let t = fauxWorker("modele"); defer { t.arreter() }
+    #expect(try await resultat(t).get().texte == "whisper")
+    try t.changerModele(.parakeet)
+    #expect(try await resultat(t).get().texte == "parakeet")
+    try t.changerModele(.cohere)
+    #expect(try await resultat(t).get().texte == "cohere")
+}
+
+@Test("changer de moteur pendant une capture est refusé et ne sauvegarde rien")
+func changementPendantCaptureRefuse() throws {
+    let t = fauxWorker("ok"); defer { t.arreter() }
+    t.preparer()
+    var sauvegarde = false
+    #expect(throws: ErreurTranscription.occupe) {
+        try t.changerModele(.cohere) { sauvegarde = true }
+    }
+    #expect(!sauvegarde)
+    t.finCapture()
+}
+
+@Test("une erreur de sauvegarde garde le moteur actuel")
+func changementSansSauvegarde() async throws {
+    let t = fauxWorker("modele"); defer { t.arreter() }
+    #expect(try await resultat(t).get().texte == "whisper")
+    #expect(throws: CocoaError(.fileWriteNoPermission)) {
+        try t.changerModele(.cohere) { throw CocoaError(.fileWriteNoPermission) }
+    }
+    #expect(try await resultat(t).get().texte == "whisper")
+}
+
+@Test("les trois vrais modèles peuvent se succéder sans relancer l'application", .enabled(if: ProcessInfo.processInfo.environment["DICTEE_TEST_MODELE"] == "1"))
+func vraisModelesSuccessifs() async throws {
+    let racine = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let t = Transcripteur(executable: racine.appendingPathComponent(".venv/bin/python"),
+                         arguments: [racine.appendingPathComponent("worker/transcribe.py").path])
+    defer { t.arreter() }
+    let wav = racine.appendingPathComponent("worker/tests/fixtures/parole.wav").path
+    for modele in ModeleLocal.allCases {
+        try t.changerModele(modele)
+        #expect(try await resultat(t, wav).get().texte.lowercased().contains("bonjour"))
+    }
+}

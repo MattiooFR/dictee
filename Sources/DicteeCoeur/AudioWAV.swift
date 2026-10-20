@@ -19,6 +19,11 @@ public final class Convertisseur {
         } else {
             guard let c = AVAudioConverter(from: entree, to: Convertisseur.formatCible)
             else { throw ErreurAudio.conversionImpossible }
+            // Les canaux discrets n'ont pas de routage implicite vers mono.
+            // Le premier canal contient notamment la voix traitée quand
+            // Voice Processing est actif ; les autres ne doivent pas être
+            // mélangés à cette voix ni atténuer son niveau.
+            if entree.channelCount > 2 { c.channelMap = [0] }
             conv = c
             ratio = Convertisseur.tauxCible / entree.sampleRate
         }

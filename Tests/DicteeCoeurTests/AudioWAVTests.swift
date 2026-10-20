@@ -37,6 +37,25 @@ func passePlat() throws {
     #expect(try conv.convertir(trame(f, 1600)).count == 1600)
 }
 
+@Test("la voix du premier canal reste audible avec les formats bruts et traités", arguments: [3, 9])
+func microMulticanal(canaux: UInt32) throws {
+    // Le micro expose des canaux discrets, sans disposition surround.
+    let disposition = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | canaux)!
+    let f = AVAudioFormat(standardFormatWithSampleRate: 48_000, channelLayout: disposition)
+    let conv = try Convertisseur(depuis: f)
+    var sortie: [Float] = []
+    for k in 0..<47 {
+        let b = trame(f, 1024, depart: k * 1024)
+        for canal in 1..<Int(canaux) {
+            b.floatChannelData![canal].update(repeating: 0, count: Int(b.frameLength))
+        }
+        sortie += try conv.convertir(b)
+    }
+    #expect(abs(Double(sortie.count) - 16_050) < 300)
+    #expect((sortie.map { abs($0) }.max() ?? 0) > 0.4)
+    #expect(AudioWAV.secondesParlees(sortie) > 0.9)
+}
+
 @Test("l'en-tête WAV est conforme")
 func enTete() {
     let d = AudioWAV.wav([Float](repeating: 0, count: 16_000))

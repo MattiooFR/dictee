@@ -271,3 +271,76 @@ DICTEE_TEST_MODELE=1 swift test --filter vraiModeleLocal
 synchronise aussi les venv existants. Il réutilise le modèle présent dans le
 cache Hugging Face ; il ne télécharge que s’il manque. Pendant l’usage,
 le worker est forcé hors ligne et signale un cache absent/incomplet.
+
+### Choisir et comparer les modèles locaux
+
+Le menu micro → **Modèle local** propose :
+
+- **Whisper Large V3 Turbo** : modèle par défaut, avec vocabulaire personnalisé.
+- **Parakeet TDT 0.6B v3** : détection automatique de la langue.
+- **Cohere Transcribe · 8 bits** : transcription en français.
+  Poids : `littoralai/cohere-transcribe-mlx-8bit`, compatibles avec `mlx-audio`.
+  Le miroir `mlx-community/cohere-transcribe-03-2026-mlx-8bit` vise
+  `mlx-speech` et ne convient pas à cet adaptateur. Le chargement strict
+  refuse les poids incompatibles.
+
+Le choix est enregistré dans `~/.config/dictee/config.json` sous la clé
+`"modele"` (`"whisper"`, `"parakeet"` ou `"cohere"`). Le menu applique le
+changement sans relancer l’app, uniquement au repos. Le processus précédent
+est arrêté avant de charger le suivant. En mode équilibré, le nouveau modèle
+se charge à la prochaine dictée ; en mode toujours prêt, il démarre aussitôt.
+Les anciennes configurations continuent d’utiliser Whisper.
+
+Installer les trois modèles, puis démarrer la version mise à jour :
+
+```bash
+./install.sh tous
+```
+
+Pour télécharger seulement les deux nouveaux modèles dans une installation
+à jour :
+
+```bash
+.venv/bin/python worker/installer_modele.py parakeet cohere
+```
+
+Les téléchargements sont explicites ; la dictée elle-même reste hors ligne.
+Un modèle absent produit un message indiquant la commande d’installation.
+Le vocabulaire personnalisé est utilisé uniquement par Whisper. Les filtres
+anti-hallucination propres à Whisper ne sont pas appliqués à Parakeet/Cohere.
+
+Comparer le **même fichier WAV** (mono, PCM 16 bits, 16 kHz) :
+
+```bash
+.venv/bin/python worker/comparer.py /chemin/essai.wav
+# Ajouter Whisper comme référence et répéter trois fois :
+.venv/bin/python worker/comparer.py /chemin/essai.wav \
+  --modeles whisper parakeet cohere --repetitions 3
+```
+
+Chaque modèle tourne successivement dans un processus distinct. La commande
+renvoie une ligne JSON par modèle, avec le temps de démarrage/chauffe, les textes,
+le temps de préparation audio, le temps d’inférence et la mémoire MLX (MiB).
+Le temps `sec` inclut le traitement audio, mais pas le démarrage du modèle.
+La mémoire indiquée concerne MLX, pas toute la mémoire du processus.
+Aucun fichier audio n’est envoyé sur le réseau ni ajouté à l’historique.
+Pour mesurer la qualité, comparer les textes à ce qui a réellement été dit ;
+un résultat sur une seule phrase ne constitue pas un classement général.
+
+#### Comparer depuis le menu macOS
+
+1. Dans le menu micro, coche **Mode comparaison (3 modèles)**.
+2. Dicte comme d’habitude avec ⌘ droite ou la pastille.
+3. Une fenêtre affiche le texte de chaque modèle, son temps de transcription,
+   son temps de démarrage et son pic mémoire MLX.
+
+Le même enregistrement est traité successivement par Whisper, Parakeet et
+Cohere. Le modèle choisi pour la dictée normale est restauré ensuite. Les textes
+se sélectionnent et se copient dans la fenêtre ; ils ne sont pas collés
+automatiquement ni ajoutés à l’historique. **Voir la dernière comparaison**
+rouvre les résultats pendant la session. Décoche le mode pour reprendre la
+dictée normale. Le mode est désactivé au lancement de l’application.
+
+Un modèle en erreur n’empêche pas les deux autres de terminer. L’audio est
+supprimé après une comparaison ayant au moins un résultat ; si les trois
+échouent, il reste disponible dans **Réessayer une dictée** pendant 24 heures.

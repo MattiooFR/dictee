@@ -247,3 +247,34 @@ DICTEE_TEST_MODELE=1 swift test --filter vraiModeleLocal
 
 `worker/requirements.lock` pins the Python environment. The installer syncs
 existing environments and reuses existing model weights.
+
+### Local model selection
+
+The microphone menu → **Modèle local** switches between Whisper Large V3 Turbo
+(the default), Parakeet TDT 0.6B v3, and Cohere Transcribe 8-bit. The selection
+persists and takes effect without restarting the app. Switching is allowed only
+while idle; the previous worker exits before the next model loads.
+
+Run `./install.sh tous` to install all three models and update the app.
+Transcription remains offline after this explicit download. Custom vocabulary
+is supported only with Whisper.
+
+Compare the same mono, 16-bit PCM, 16 kHz WAV locally:
+
+```bash
+.venv/bin/python worker/comparer.py /path/to/sample.wav \
+  --modeles whisper parakeet cohere --repetitions 3
+```
+
+The JSON output separates startup, audio preparation, inference time, text and
+MLX memory (MiB). Each model runs sequentially in its own process. See
+[the French documentation](README.fr.md#choisir-et-comparer-les-modèles-locaux)
+for configuration and installation details.
+
+To compare directly in the app, enable **Mode comparaison (3 modèles)** in the
+microphone menu and dictate normally. A window shows each transcript, startup
+time, transcription time, and peak MLX memory. Models run sequentially and your
+normal model is restored afterwards. Text is selectable for copying; comparison
+results are not automatically pasted or added to history. Disable the mode to
+resume normal dictation. **Voir la dernière comparaison** reopens the last
+results during the current session.

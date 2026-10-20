@@ -1,4 +1,5 @@
 """Processus contrôlé pour tester le protocole sans GPU."""
+import os
 import json
 import sys
 import time
@@ -23,9 +24,9 @@ for line in sys.stdin:
         time.sleep(10)
     if mode == 'meurt':
         sys.exit(3)
-    if mode == 'erreur':
+    if mode == 'erreur' or (mode == 'erreur_parakeet' and os.environ.get('DICTEE_MODEL') == 'parakeet'):
         print(json.dumps({'id': id_, 'error': 'micro cassé'}), flush=True)
         continue
     if mode == 'perime':
         print(json.dumps({'id': 'ancienne-demande', 'text': 'ancienne dictée', 'sec': 0.1}), flush=True)
-    print(json.dumps({'id': id_, 'text': 'bonjour ' + path.split('/')[-1], 'sec': 0.2}), flush=True)
+    print(json.dumps({'id': id_, 'text': os.environ.get('DICTEE_MODEL', '') if mode == 'modele' else 'bonjour ' + path.split('/')[-1], 'sec': 0.2}), flush=True)

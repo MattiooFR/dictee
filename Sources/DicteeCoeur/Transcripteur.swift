@@ -12,6 +12,8 @@ public final class Transcripteur {
     public struct Reponse: Equatable {
         public let texte: String
         public let secondes: Double
+        public let memoireMio: Double?
+        public let demarrageSecondes: Double?
     }
     private struct Demande {
         let id: String
@@ -26,6 +28,7 @@ public final class Transcripteur {
     private var inactivite: TimeInterval
     private let purgeApres: TimeInterval
     private let cacheMo: Int
+    private var modele: ModeleLocal
     private let file = DispatchQueue(label: "dictee.transcripteur")
     private var process: Process?
     private var sortie: FileHandle?
@@ -34,6 +37,7 @@ public final class Transcripteur {
     private var generation = UUID()
     private var generationRepos = UUID()
     private var disponible = false
+    private var demarrageSecondes: Double?
     private var capture = false
     private var chauffe: String?
     private var demande: Demande?
@@ -48,9 +52,10 @@ public final class Transcripteur {
 
     public init(executable: URL, arguments: [String], delai: TimeInterval = 30,
                 delaiPreparation: TimeInterval = 120, inactivite: TimeInterval = 900,
-                purgeApres: TimeInterval = 60, cacheMo: Int = 512) {
+                purgeApres: TimeInterval = 60, cacheMo: Int = 512, modele: ModeleLocal = .whisper) {
         self.executable = executable; self.arguments = arguments; self.delai = delai
         self.delaiPreparation = delaiPreparation; self.inactivite = inactivite
+        self.modele = modele
         self.purgeApres = purgeApres; self.cacheMo = cacheMo
     }
 
@@ -71,6 +76,7 @@ public final class Transcripteur {
         p.executableURL = executable; p.arguments = arguments
         var env = ProcessInfo.processInfo.environment
         env["HF_HUB_OFFLINE"] = "1"
+        env["DICTEE_MODEL"] = modele.rawValue
         env["DICTEE_CACHE_MB"] = String(cacheMo)
         p.environment = env
         p.standardInput = input; p.standardOutput = output
@@ -122,6 +128,23 @@ public final class Transcripteur {
                 do { try lancer() } catch { echouer(.worker(error.localizedDescription)) }
             }
             repos()
+        }
+    }
+
+    /// Réservé au repos. Attend la fin de l'ancien processus avant tout chargement.
+    /// La sauvegarde fait partie de la transaction : un échec conserve l'ancien moteur.
+    public func changerModele(_ nouveau: ModeleLocal, enregistrer: () throws -> Void = {}) throws {
+        try file.sync {
+            guard !capture, demande == nil else { throw ErreurTranscription.occupe }
+            try enregistrer()
+            let ancien = process
+            terminerProcessus(force: true)
+            ancien?.waitUntilExit()
+            modele = nouveau
+            journal("modèle sélectionné : \(nouveau.titre)")
+            if inactivite == 0 {
+                do { try lancer() } catch { echouer(.worker(error.localizedDescription)) }
+            }
         }
     }
 
@@ -180,6 +203,7 @@ public final class Transcripteur {
         if let metrics = o["metrics"], let d = try? JSONSerialization.data(withJSONObject: metrics, options: .sortedKeys),
            let texte = String(data: d, encoding: .utf8) { journal("moteur métriques : \(texte)") }
         if o["ready"] as? Bool == true {
+            demarrageSecondes = (o["metrics"] as? [String: Any])?["startup_sec"] as? Double
             disponible = true; minuteur?.cancel(); minuteur = nil
             journal("worker prêt")
             do { try envoyerSiPret() } catch { echouer(.workerMort) }
@@ -198,7 +222,9 @@ public final class Transcripteur {
         guard let texte = o["text"] as? String else { echouer(.reponseIllisible); return }
         journal(String(format: "demande %@ : total worker %.3f s", id,
                        ProcessInfo.processInfo.systemUptime - d.debut))
-        conclure(.success(Reponse(texte: texte, secondes: o["sec"] as? Double ?? 0)))
+        conclure(.success(Reponse(texte: texte, secondes: o["sec"] as? Double ?? 0,
+                                 memoireMio: (o["metrics"] as? [String: Any])?["peak_mib"] as? Double,
+                                 demarrageSecondes: demarrageSecondes)))
     }
 
     private func armer(_ secondes: TimeInterval) {
@@ -253,7 +279,7 @@ public final class Transcripteur {
             // Au repos, EOF laisse Python fermer proprement ses ressources.
             // Un worker bloqué reçoit SIGTERM puis SIGKILL si nécessaire.
             if force { p.terminate() }
-            file.asyncAfter(deadline: .now() + (force ? 1 : 3)) {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + (force ? 1 : 3)) {
                 if p.isRunning { kill(p.processIdentifier, SIGKILL) }
             }
         }
